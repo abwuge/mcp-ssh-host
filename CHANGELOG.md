@@ -6,3 +6,4 @@
 - Unified tools across local and SSH targets.
 - Session-scoped active target stickiness.
 - Local and OpenSSH CLI backends.
+- Optional HTTP transport with `/health` and `/mcp`.

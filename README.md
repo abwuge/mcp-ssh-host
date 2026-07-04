@@ -18,6 +18,7 @@ This repository is intentionally small and readable. It is a foundation for late
 Implemented:
 
 - minimal stdio MCP JSON-RPC server;
+- optional HTTP JSON-RPC server;
 - `initialize`, `tools/list`, `tools/call`, `ping`;
 - target registry with `local` and `ssh:<profile>` ids;
 - session-scoped active target stickiness;
@@ -43,10 +44,10 @@ Implemented:
 
 Known MVP limitations:
 
-- the stdio active target is process/session-scoped; an HTTP daemon transport should make it per client/session;
+- active target state is process-scoped, including HTTP mode; a later daemon transport should make it per client/session;
 - SSH file operations rely on `python3` on the remote host;
 - `terminal_resize` currently records the request but does not yet call a low-level PTY resize API;
-- this repo was generated in an environment without Rust installed, so run `cargo fmt`, `cargo test`, and `cargo clippy` locally before production use.
+- run `cargo fmt`, `cargo test`, and `cargo clippy` before production use.
 
 ## Tool model
 
@@ -128,6 +129,22 @@ Or rely on:
 MCP_SSH_HOST_CONFIG=/path/to/config.toml cargo run
 ```
 
+The default transport is stdio. To run an HTTP server instead:
+
+```bash
+cargo run -- --config examples/config.toml --http 127.0.0.1:8765
+```
+
+HTTP endpoints:
+
+```text
+GET  /health
+POST /mcp
+POST /
+```
+
+The HTTP transport has no authentication. Bind it to `127.0.0.1` unless the surrounding network is trusted and the target policies are locked down.
+
 ## Manual JSON-RPC smoke test
 
 After building:
@@ -152,6 +169,28 @@ A tool call looks like:
     "arguments": {}
   }
 }
+```
+
+## Manual HTTP smoke test
+
+Start the server:
+
+```bash
+cargo run -- --config examples/config.toml --http 127.0.0.1:8765
+```
+
+Then call the MCP endpoint:
+
+```bash
+curl -s http://127.0.0.1:8765/health
+
+curl -s http://127.0.0.1:8765/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual","version":"0"}}}'
+
+curl -s http://127.0.0.1:8765/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"target_list","arguments":{}}}'
 ```
 
 ## Safety defaults

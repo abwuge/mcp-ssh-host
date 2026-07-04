@@ -47,27 +47,78 @@ pub fn serve_stdio(state: Arc<AppState>) -> Result<()> {
             continue;
         }
 
-        let response = match serde_json::from_str::<RpcRequest>(&line) {
-            Ok(request) => handle_request(Arc::clone(&state), request),
-            Err(err) => Some(RpcResponse {
-                jsonrpc: "2.0",
-                id: None,
-                result: None,
-                error: Some(RpcError {
-                    code: -32700,
-                    message: format!("parse error: {err}"),
-                }),
-            }),
-        };
-
-        if let Some(response) = response {
-            serde_json::to_writer(&mut stdout, &response)?;
+        if let Some(response) = handle_json_bytes(Arc::clone(&state), line.as_bytes())? {
+            stdout.write_all(&response)?;
             stdout.write_all(b"\n")?;
             stdout.flush()?;
         }
     }
 
     Ok(())
+}
+
+pub fn handle_json_bytes(state: Arc<AppState>, bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    let value = match serde_json::from_slice::<Value>(bytes) {
+        Ok(value) => value,
+        Err(err) => {
+            let response = parse_error(format!("parse error: {err}"));
+            return Ok(Some(serde_json::to_vec(&response)?));
+        }
+    };
+
+    handle_json_value(state, value)?
+        .map(|response| serde_json::to_vec(&response))
+        .transpose()
+        .map_err(Error::Json)
+}
+
+pub fn handle_json_value(state: Arc<AppState>, value: Value) -> Result<Option<Value>> {
+    if let Value::Array(requests) = value {
+        if requests.is_empty() {
+            return serde_json::to_value(parse_error("parse error: empty batch".to_string()))
+                .map(Some)
+                .map_err(Error::Json);
+        }
+
+        let mut responses = Vec::new();
+        for request in requests {
+            if let Some(response) = handle_request_value(Arc::clone(&state), request)? {
+                responses.push(response);
+            }
+        }
+
+        if responses.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(Value::Array(responses)))
+        }
+    } else {
+        handle_request_value(state, value)
+    }
+}
+
+fn handle_request_value(state: Arc<AppState>, value: Value) -> Result<Option<Value>> {
+    let response = match serde_json::from_value::<RpcRequest>(value) {
+        Ok(request) => handle_request(state, request),
+        Err(err) => Some(parse_error(format!("parse error: {err}"))),
+    };
+
+    response
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(Error::Json)
+}
+
+fn parse_error(message: String) -> RpcResponse {
+    RpcResponse {
+        jsonrpc: "2.0",
+        id: None,
+        result: None,
+        error: Some(RpcError {
+            code: -32700,
+            message,
+        }),
+    }
 }
 
 fn handle_request(state: Arc<AppState>, request: RpcRequest) -> Option<RpcResponse> {

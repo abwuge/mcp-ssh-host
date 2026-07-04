@@ -16,6 +16,7 @@ sha2 = "0.10"
 similar = "2"
 tempfile = "3"
 thiserror = "2"
+tiny_http = "0.12"
 toml = "0.8"
 
 [dev-dependencies]
