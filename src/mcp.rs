@@ -1,7 +1,14 @@
-use crate::{error::{Error, Result}, state::AppState, tools};
+use crate::{
+    error::{Error, Result},
+    state::AppState,
+    tools,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{io::{self, BufRead, Write}, sync::Arc};
+use std::{
+    io::{self, BufRead, Write},
+    sync::Arc,
+};
 
 #[derive(Debug, Deserialize)]
 struct RpcRequest {
@@ -123,7 +130,11 @@ fn tools_call(state: Arc<AppState>, params: Value) -> Result<Value> {
     }
 
     let params: ToolCallParams = serde_json::from_value(params)?;
-    match tools::call_tool(state, &params.name, params.arguments.unwrap_or_else(|| json!({}))) {
+    match tools::call_tool(
+        state,
+        &params.name,
+        params.arguments.unwrap_or_else(|| json!({})),
+    ) {
         Ok(value) => Ok(json!({
             "content": [{
                 "type": "text",

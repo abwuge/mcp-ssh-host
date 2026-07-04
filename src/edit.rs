@@ -1,4 +1,7 @@
-use crate::{error::{Error, Result}, util::sha256_hex};
+use crate::{
+    error::{Error, Result},
+    util::sha256_hex,
+};
 use serde::{Deserialize, Serialize};
 use similar::TextDiff;
 

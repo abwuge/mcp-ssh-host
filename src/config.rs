@@ -1,6 +1,10 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -246,5 +250,7 @@ pub fn default_config_path() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
 
-    home.join(".config").join("mcp-ssh-host").join("config.toml")
+    home.join(".config")
+        .join("mcp-ssh-host")
+        .join("config.toml")
 }

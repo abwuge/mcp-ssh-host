@@ -81,7 +81,7 @@ impl AppState {
 
     pub fn set_active_target(&self, target: TargetId) -> Option<TargetId> {
         let mut guard = self.active_target.lock().unwrap();
-        std::mem::replace(&mut *guard, Some(target))
+        guard.replace(target)
     }
 
     pub fn get_target_config(&self, target: &TargetId) -> Result<&TargetConfig> {

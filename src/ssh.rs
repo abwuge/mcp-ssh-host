@@ -27,7 +27,11 @@ pub fn connect(config: &Config, ssh: &SshTargetConfig, timeout: Duration) -> Res
     run_program_collect("ssh", &args, None, timeout)
 }
 
-pub fn disconnect(config: &Config, ssh: &SshTargetConfig, timeout: Duration) -> Result<RawExecOutput> {
+pub fn disconnect(
+    config: &Config,
+    ssh: &SshTargetConfig,
+    timeout: Duration,
+) -> Result<RawExecOutput> {
     if !ssh.control_master {
         return Ok(RawExecOutput {
             exit_code: Some(0),
@@ -58,7 +62,12 @@ pub fn exec(
     run_program_collect("ssh", &args, None, timeout)
 }
 
-pub fn read_file(config: &Config, ssh: &SshTargetConfig, path: &str, timeout: Duration) -> Result<Vec<u8>> {
+pub fn read_file(
+    config: &Config,
+    ssh: &SshTargetConfig,
+    path: &str,
+    timeout: Duration,
+) -> Result<Vec<u8>> {
     let code = r#"import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 sys.stdout.buffer.write(p.read_bytes())
@@ -110,7 +119,12 @@ finally:
     }
 }
 
-pub fn list_dir(config: &Config, ssh: &SshTargetConfig, path: &str, timeout: Duration) -> Result<Value> {
+pub fn list_dir(
+    config: &Config,
+    ssh: &SshTargetConfig,
+    path: &str,
+    timeout: Duration,
+) -> Result<Value> {
     let code = r#"import json, pathlib, stat, sys
 root = pathlib.Path(sys.argv[1])
 entries = []
@@ -154,9 +168,7 @@ pub fn terminal_program_and_args(
     args.push(destination(ssh));
 
     if cwd.is_some() || shell.is_some() {
-        let shell = shell
-            .or(ssh.shell.as_deref())
-            .unwrap_or("${SHELL:-sh}");
+        let shell = shell.or(ssh.shell.as_deref()).unwrap_or("${SHELL:-sh}");
         let mut remote = String::new();
         if let Some(cwd) = cwd {
             remote.push_str("cd ");

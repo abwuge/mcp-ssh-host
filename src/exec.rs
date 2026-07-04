@@ -1,8 +1,7 @@
 use crate::{
     config::TargetConfig,
     error::{Error, Result},
-    policy,
-    ssh,
+    policy, ssh,
     state::AppState,
     target::{ResolvedTarget, TargetId},
     util::truncate_bytes,
@@ -11,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::Read,
     process::{Command, Stdio},
-    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -72,7 +70,11 @@ pub fn run(state: &AppState, req: ExecRequest) -> Result<ExecResponse> {
             req.cwd.as_deref(),
             Duration::from_millis(timeout_ms),
         )?,
-        _ => return Err(Error::Target(format!("target {target} has mismatched config"))),
+        _ => {
+            return Err(Error::Target(format!(
+                "target {target} has mismatched config"
+            )))
+        }
     };
 
     let (stdout, stdout_truncated) = truncate_bytes(raw.stdout, max_output);
@@ -91,7 +93,11 @@ pub fn run(state: &AppState, req: ExecRequest) -> Result<ExecResponse> {
     })
 }
 
-pub fn run_local_shell(command: &str, cwd: Option<&str>, timeout: Duration) -> Result<RawExecOutput> {
+pub fn run_local_shell(
+    command: &str,
+    cwd: Option<&str>,
+    timeout: Duration,
+) -> Result<RawExecOutput> {
     #[cfg(windows)]
     let mut cmd = {
         let mut cmd = Command::new("cmd.exe");
@@ -128,7 +134,7 @@ pub fn run_program_collect(
     run_command_collect_with_stdin(cmd, stdin, timeout)
 }
 
-pub fn run_command_collect(mut cmd: Command, timeout: Duration) -> Result<RawExecOutput> {
+pub fn run_command_collect(cmd: Command, timeout: Duration) -> Result<RawExecOutput> {
     run_command_collect_with_stdin(cmd, None, timeout)
 }
 
@@ -137,10 +143,7 @@ fn run_command_collect_with_stdin(
     stdin_data: Option<Vec<u8>>,
     timeout: Duration,
 ) -> Result<RawExecOutput> {
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
 
     if let Some(data) = stdin_data {
         let mut stdin = child

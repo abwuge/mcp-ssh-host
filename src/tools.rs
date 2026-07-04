@@ -3,8 +3,7 @@ use crate::{
     error::{Error, Result},
     exec::{self, ExecRequest},
     fs::{self, FileEditRequest, FileListRequest, FileReadRequest},
-    policy,
-    ssh,
+    policy, ssh,
     state::AppState,
     target::{ResolvedTarget, TargetId},
     terminal::{
@@ -76,15 +75,47 @@ pub fn call_tool(state: Arc<AppState>, name: &str, args: Value) -> Result<Value>
         "target_select" => target_select(&state, parse(args)?),
         "target_connect" => target_connect(&state, parse(args)?),
         "target_disconnect" => target_disconnect(&state, parse(args)?),
-        "exec" => Ok(serde_json::to_value(exec::run(&state, parse::<ExecRequest>(args)?)?)?),
-        "file_read" => Ok(serde_json::to_value(fs::read(&state, parse::<FileReadRequest>(args)?)?)?),
-        "file_list" => Ok(serde_json::to_value(fs::list(&state, parse::<FileListRequest>(args)?)?)?),
-        "file_edit" => Ok(serde_json::to_value(fs::edit(&state, parse::<FileEditRequest>(args)?)?)?),
-        "terminal_open" => Ok(serde_json::to_value(state.terminals.open(&state, parse::<TerminalOpenRequest>(args)?)?)?),
-        "terminal_send" => Ok(serde_json::to_value(state.terminals.send(parse::<TerminalSendRequest>(args)?)?)?),
-        "terminal_read" => Ok(serde_json::to_value(state.terminals.read(parse::<TerminalReadRequest>(args)?)?)?),
-        "terminal_resize" => Ok(serde_json::to_value(state.terminals.resize(parse::<TerminalResizeRequest>(args)?)?)?),
-        "terminal_close" => Ok(serde_json::to_value(state.terminals.close(parse::<TerminalCloseRequest>(args)?)?)?),
+        "exec" => Ok(serde_json::to_value(exec::run(
+            &state,
+            parse::<ExecRequest>(args)?,
+        )?)?),
+        "file_read" => Ok(serde_json::to_value(fs::read(
+            &state,
+            parse::<FileReadRequest>(args)?,
+        )?)?),
+        "file_list" => Ok(serde_json::to_value(fs::list(
+            &state,
+            parse::<FileListRequest>(args)?,
+        )?)?),
+        "file_edit" => Ok(serde_json::to_value(fs::edit(
+            &state,
+            parse::<FileEditRequest>(args)?,
+        )?)?),
+        "terminal_open" => Ok(serde_json::to_value(
+            state
+                .terminals
+                .open(&state, parse::<TerminalOpenRequest>(args)?)?,
+        )?),
+        "terminal_send" => Ok(serde_json::to_value(state.terminals.send(parse::<
+            TerminalSendRequest,
+        >(
+            args
+        )?)?)?),
+        "terminal_read" => Ok(serde_json::to_value(state.terminals.read(parse::<
+            TerminalReadRequest,
+        >(
+            args
+        )?)?)?),
+        "terminal_resize" => Ok(serde_json::to_value(state.terminals.resize(parse::<
+            TerminalResizeRequest,
+        >(
+            args
+        )?)?)?),
+        "terminal_close" => Ok(serde_json::to_value(state.terminals.close(parse::<
+            TerminalCloseRequest,
+        >(
+            args
+        )?)?)?),
         other => Err(Error::Tool(format!("unknown tool: {other}"))),
     }
 }
@@ -156,7 +187,9 @@ fn target_connect(state: &AppState, req: TargetRequest) -> Result<Value> {
                 "timed_out": output.timed_out,
             }))
         }
-        _ => Err(Error::Target(format!("target {target} has mismatched config"))),
+        _ => Err(Error::Target(format!(
+            "target {target} has mismatched config"
+        ))),
     }
 }
 
@@ -181,7 +214,9 @@ fn target_disconnect(state: &AppState, req: TargetRequest) -> Result<Value> {
                 "timed_out": output.timed_out,
             }))
         }
-        _ => Err(Error::Target(format!("target {target} has mismatched config"))),
+        _ => Err(Error::Target(format!(
+            "target {target} has mismatched config"
+        ))),
     }
 }
 
@@ -218,19 +253,35 @@ fn object_schema(props: Vec<Prop>) -> Value {
 }
 
 fn required_string(name: &'static str, description: &'static str) -> Prop {
-    Prop { name, required: true, value: json!({ "type": "string", "description": description }) }
+    Prop {
+        name,
+        required: true,
+        value: json!({ "type": "string", "description": description }),
+    }
 }
 
 fn optional_string(name: &'static str, description: &'static str) -> Prop {
-    Prop { name, required: false, value: json!({ "type": "string", "description": description }) }
+    Prop {
+        name,
+        required: false,
+        value: json!({ "type": "string", "description": description }),
+    }
 }
 
 fn required_integer(name: &'static str, description: &'static str) -> Prop {
-    Prop { name, required: true, value: json!({ "type": "integer", "description": description }) }
+    Prop {
+        name,
+        required: true,
+        value: json!({ "type": "integer", "description": description }),
+    }
 }
 
 fn optional_integer(name: &'static str, description: &'static str) -> Prop {
-    Prop { name, required: false, value: json!({ "type": "integer", "description": description }) }
+    Prop {
+        name,
+        required: false,
+        value: json!({ "type": "integer", "description": description }),
+    }
 }
 
 fn file_edit_schema() -> Value {

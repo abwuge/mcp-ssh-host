@@ -3,7 +3,10 @@ use crate::{
     error::{Error, Result},
     target::{TargetId, TargetSource},
 };
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum FileAccess {
@@ -79,7 +82,9 @@ pub fn check_file(
             return Err(Error::Policy(format!("file read is disabled for {target}")));
         }
         FileAccess::Write if !policy.allow_file_write => {
-            return Err(Error::Policy(format!("file write is disabled for {target}")));
+            return Err(Error::Policy(format!(
+                "file write is disabled for {target}"
+            )));
         }
         _ => {}
     }
@@ -129,7 +134,9 @@ fn check_remote_path(path: &str, allowed_roots: &[String]) -> Result<()> {
     let normalized = normalize_remote_path(path);
     for root in allowed_roots {
         let root = normalize_remote_path(root);
-        if normalized == root || normalized.starts_with(&(root.trim_end_matches('/').to_string() + "/")) {
+        if normalized == root
+            || normalized.starts_with(&(root.trim_end_matches('/').to_string() + "/"))
+        {
             return Ok(());
         }
     }

@@ -11,7 +11,12 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{fs, io::Write, path::Path, time::{Duration, UNIX_EPOCH}};
+use std::{
+    fs,
+    io::Write,
+    path::Path,
+    time::{Duration, UNIX_EPOCH},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileReadRequest {
@@ -87,7 +92,13 @@ pub fn read(state: &AppState, req: FileReadRequest) -> Result<FileReadResponse> 
     policy::check_file(&target, config, &req.path, FileAccess::Read, source)?;
 
     let policy = policy::target_policy(config);
-    let bytes = read_bytes(state, &target, config, &req.path, Duration::from_millis(policy.default_timeout_ms))?;
+    let bytes = read_bytes(
+        state,
+        &target,
+        config,
+        &req.path,
+        Duration::from_millis(policy.default_timeout_ms),
+    )?;
     let sha256 = sha256_hex(&bytes);
     let original_len = bytes.len();
     let (bytes, truncated) = truncate_bytes(bytes, req.max_bytes.or(Some(policy.max_output_bytes)));
@@ -119,7 +130,11 @@ pub fn list(state: &AppState, req: FileListRequest) -> Result<FileListResponse> 
             let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
             list_remote(state, ssh_config, &req.path, timeout)?
         }
-        _ => return Err(Error::Target(format!("target {target} has mismatched config"))),
+        _ => {
+            return Err(Error::Target(format!(
+                "target {target} has mismatched config"
+            )))
+        }
     };
 
     Ok(FileListResponse {
@@ -178,7 +193,9 @@ fn read_bytes(
         (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
             ssh::read_file(&state.config, ssh_config, path, timeout)
         }
-        _ => Err(Error::Target(format!("target {target} has mismatched config"))),
+        _ => Err(Error::Target(format!(
+            "target {target} has mismatched config"
+        ))),
     }
 }
 
@@ -195,7 +212,9 @@ fn write_bytes(
         (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
             ssh::write_file(&state.config, ssh_config, path, bytes, timeout)
         }
-        _ => Err(Error::Target(format!("target {target} has mismatched config"))),
+        _ => Err(Error::Target(format!(
+            "target {target} has mismatched config"
+        ))),
     }
 }
 
@@ -207,8 +226,7 @@ fn write_local_atomic(path: &str, bytes: &[u8]) -> Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
     tmp.flush()?;
-    tmp.persist(path)
-        .map_err(|err| Error::Io(err.error))?;
+    tmp.persist(path).map_err(|err| Error::Io(err.error))?;
     Ok(())
 }
 
@@ -216,7 +234,7 @@ fn list_local(path: &str) -> Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(path)? {
         let entry = entry?;
-        let meta = entry.symlink_metadata()?;
+        let meta = fs::symlink_metadata(entry.path())?;
         let kind = if meta.is_dir() {
             "dir"
         } else if meta.is_file() {
@@ -250,9 +268,6 @@ fn list_remote(
     timeout: Duration,
 ) -> Result<Vec<FileEntry>> {
     let value = ssh::list_dir(&state.config, ssh_config, path, timeout)?;
-    let entries = value
-        .get("entries")
-        .cloned()
-        .unwrap_or_else(|| json!([]));
+    let entries = value.get("entries").cloned().unwrap_or_else(|| json!([]));
     serde_json::from_value::<Vec<FileEntry>>(entries).map_err(Error::Json)
 }

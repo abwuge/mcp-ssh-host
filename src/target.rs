@@ -85,7 +85,10 @@ mod tests {
     #[test]
     fn parses_targets() {
         assert_eq!("local".parse::<TargetId>().unwrap(), TargetId::Local);
-        assert_eq!("ssh:dev".parse::<TargetId>().unwrap(), TargetId::Ssh("dev".to_string()));
+        assert_eq!(
+            "ssh:dev".parse::<TargetId>().unwrap(),
+            TargetId::Ssh("dev".to_string())
+        );
         assert!("dev".parse::<TargetId>().is_err());
     }
 }

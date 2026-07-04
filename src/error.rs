@@ -39,7 +39,11 @@ impl Error {
     pub fn json_rpc_code(&self) -> i64 {
         match self {
             Error::Json(_) => -32700,
-            Error::Config(_) | Error::Target(_) | Error::Policy(_) | Error::Tool(_) | Error::Terminal(_) => -32000,
+            Error::Config(_)
+            | Error::Target(_)
+            | Error::Policy(_)
+            | Error::Tool(_)
+            | Error::Terminal(_) => -32000,
             Error::Io(_) | Error::TomlDe(_) | Error::TomlSer(_) | Error::Utf8(_) => -32001,
         }
     }

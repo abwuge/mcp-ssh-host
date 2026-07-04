@@ -11,9 +11,10 @@ pub fn shell_quote(value: &str) -> String {
         return "''".to_string();
     }
 
-    let safe = value
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'=' | b','));
+    let safe = value.bytes().all(|b| {
+        b.is_ascii_alphanumeric()
+            || matches!(b, b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'=' | b',')
+    });
 
     if safe {
         return value.to_string();

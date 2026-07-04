@@ -1,8 +1,7 @@
 use crate::{
     config::TargetConfig,
     error::{Error, Result},
-    policy,
-    ssh,
+    policy, ssh,
     state::AppState,
     target::{ResolvedTarget, TargetId},
 };
@@ -11,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 
@@ -157,16 +159,22 @@ impl TerminalRegistry {
                 );
                 (program, args, None)
             }
-            _ => return Err(Error::Target(format!("target {target} has mismatched config"))),
+            _ => {
+                return Err(Error::Target(format!(
+                    "target {target} has mismatched config"
+                )))
+            }
         };
 
         let pty_system = native_pty_system();
-        let pair = pty_system.openpty(PtySize {
-            rows: req.rows,
-            cols: req.cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: req.rows,
+                cols: req.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|err| Error::Terminal(err.to_string()))?;
 
         let mut cmd = CommandBuilder::new(program);
         for arg in args {
@@ -176,11 +184,20 @@ impl TerminalRegistry {
             cmd.cwd(cwd);
         }
 
-        let child = pair.slave.spawn_command(cmd)?;
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|err| Error::Terminal(err.to_string()))?;
         drop(pair.slave);
 
-        let mut reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|err| Error::Terminal(err.to_string()))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|err| Error::Terminal(err.to_string()))?;
 
         let id = format!("term_{}", TERMINAL_COUNTER.fetch_add(1, Ordering::Relaxed));
         let buffer = Arc::new(RingBuffer::new(self.default_buffer_bytes));
@@ -230,7 +247,7 @@ impl TerminalRegistry {
         writer.flush()?;
         Ok(TerminalSendResponse {
             terminal_id: req.terminal_id,
-            bytes_written: req.input.as_bytes().len(),
+            bytes_written: req.input.len(),
         })
     }
 
@@ -255,7 +272,11 @@ impl TerminalRegistry {
     pub fn resize(&self, req: TerminalResizeRequest) -> Result<TerminalResizeResponse> {
         let session = self.get(&req.terminal_id)?;
         session.buffer.push(
-            format!("\r\n[mcp-ssh-host: resize requested to {}x{}; PTY resize is not yet wired]\r\n", req.rows, req.cols).as_bytes(),
+            format!(
+                "\r\n[mcp-ssh-host: resize requested to {}x{}; PTY resize is not yet wired]\r\n",
+                req.rows, req.cols
+            )
+            .as_bytes(),
         );
         Ok(TerminalResizeResponse {
             terminal_id: req.terminal_id,
