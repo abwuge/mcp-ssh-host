@@ -1,0 +1,22 @@
+[package]
+name = "mcp-ssh-host"
+version = "0.1.0"
+edition = "2021"
+description = "A target-based MCP server for local and SSH host control"
+license = "MIT"
+repository = "https://github.com/your-name/mcp-ssh-host"
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+similar = "2"
+tempfile = "3"
+thiserror = "2"
+toml = "0.8"
+
+[dev-dependencies]
+pretty_assertions = "1"
