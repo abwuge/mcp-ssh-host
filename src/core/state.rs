@@ -2,6 +2,7 @@ use crate::{
     core::{
         config::{Config, TargetConfig},
         error::{Error, Result},
+        oauth::OAuthState,
         target::{ResolvedTarget, TargetId, TargetSource},
     },
     tooling::terminal::TerminalRegistry,
@@ -15,6 +16,7 @@ pub struct AppState {
     active_target: Mutex<Option<TargetId>>,
     pub ssh_sessions: SshSessionRegistry,
     pub terminals: TerminalRegistry,
+    pub oauth: Mutex<OAuthState>,
     started_at: SystemTime,
 }
 
@@ -50,6 +52,7 @@ impl AppState {
         Ok(Self {
             ssh_sessions: SshSessionRegistry::new(),
             terminals: TerminalRegistry::new(config.server.terminal_ring_buffer_bytes),
+            oauth: Mutex::new(OAuthState::new()),
             config,
             active_target: Mutex::new(active),
             started_at: SystemTime::now(),

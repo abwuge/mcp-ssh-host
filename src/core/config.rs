@@ -26,6 +26,27 @@ pub struct ServerConfig {
     #[serde(default = "default_http_bearer_token")]
     pub http_bearer_token: Option<String>,
 
+    #[serde(default = "default_oauth_enabled")]
+    pub oauth_enabled: bool,
+
+    #[serde(default = "default_public_base_url")]
+    pub public_base_url: Option<String>,
+
+    #[serde(default = "default_oauth_authorization_password")]
+    pub oauth_authorization_password: Option<String>,
+
+    #[serde(default = "default_oauth_scopes")]
+    pub oauth_scopes: Vec<String>,
+
+    #[serde(default = "default_oauth_allow_dynamic_client_registration")]
+    pub oauth_allow_dynamic_client_registration: bool,
+
+    #[serde(default = "default_oauth_authorization_code_ttl_secs")]
+    pub oauth_authorization_code_ttl_secs: u64,
+
+    #[serde(default = "default_oauth_access_token_ttl_secs")]
+    pub oauth_access_token_ttl_secs: u64,
+
     #[serde(default)]
     pub default_target: Option<String>,
 
@@ -136,6 +157,14 @@ impl Default for ServerConfig {
             name: default_name(),
             version: default_version(),
             http_bearer_token: default_http_bearer_token(),
+            oauth_enabled: default_oauth_enabled(),
+            public_base_url: default_public_base_url(),
+            oauth_authorization_password: default_oauth_authorization_password(),
+            oauth_scopes: default_oauth_scopes(),
+            oauth_allow_dynamic_client_registration:
+                default_oauth_allow_dynamic_client_registration(),
+            oauth_authorization_code_ttl_secs: default_oauth_authorization_code_ttl_secs(),
+            oauth_access_token_ttl_secs: default_oauth_access_token_ttl_secs(),
             default_target: None,
             terminal_ring_buffer_bytes: default_ring_buffer_bytes(),
             runtime_dir: default_runtime_dir(),
@@ -216,6 +245,59 @@ impl Config {
             }
         }
 
+        if let Some(password) = &self.server.oauth_authorization_password {
+            if password.trim().is_empty() || password.trim() != password {
+                return Err(Error::Config(
+                    "server.oauth_authorization_password must not be empty or padded with whitespace"
+                        .to_string(),
+                ));
+            }
+        }
+
+        if let Some(base_url) = &self.server.public_base_url {
+            if base_url.trim().is_empty() || base_url.trim() != base_url {
+                return Err(Error::Config(
+                    "server.public_base_url must not be empty or padded with whitespace"
+                        .to_string(),
+                ));
+            }
+            if base_url.ends_with('/') {
+                return Err(Error::Config(
+                    "server.public_base_url must not end with /".to_string(),
+                ));
+            }
+        }
+
+        if self.server.oauth_enabled && self.server.oauth_scopes.is_empty() {
+            return Err(Error::Config(
+                "server.oauth_scopes must contain at least one scope when OAuth is enabled"
+                    .to_string(),
+            ));
+        }
+
+        if let Some(scope) = self
+            .server
+            .oauth_scopes
+            .iter()
+            .find(|scope| scope.trim().is_empty() || scope.trim() != *scope)
+        {
+            return Err(Error::Config(format!(
+                "server.oauth_scopes contains an empty or padded scope: {scope:?}"
+            )));
+        }
+
+        if self.server.oauth_authorization_code_ttl_secs == 0 {
+            return Err(Error::Config(
+                "server.oauth_authorization_code_ttl_secs must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.server.oauth_access_token_ttl_secs == 0 {
+            return Err(Error::Config(
+                "server.oauth_access_token_ttl_secs must be greater than 0".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -232,6 +314,52 @@ fn default_http_bearer_token() -> Option<String> {
     std::env::var("MCP_SSH_HOST_HTTP_TOKEN")
         .ok()
         .filter(|token| !token.trim().is_empty())
+}
+
+fn default_oauth_enabled() -> bool {
+    matches!(
+        std::env::var("MCP_SSH_HOST_OAUTH").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+    )
+}
+
+fn default_public_base_url() -> Option<String> {
+    std::env::var("MCP_SSH_HOST_PUBLIC_BASE_URL")
+        .ok()
+        .map(|url| url.trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
+}
+
+fn default_oauth_authorization_password() -> Option<String> {
+    std::env::var("MCP_SSH_HOST_OAUTH_PASSWORD")
+        .ok()
+        .filter(|password| !password.trim().is_empty())
+}
+
+fn default_oauth_scopes() -> Vec<String> {
+    std::env::var("MCP_SSH_HOST_OAUTH_SCOPES")
+        .ok()
+        .map(|scopes| {
+            scopes
+                .split_whitespace()
+                .filter(|scope| !scope.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .filter(|scopes: &Vec<String>| !scopes.is_empty())
+        .unwrap_or_else(|| vec!["mcp:tools".to_string()])
+}
+
+fn default_oauth_allow_dynamic_client_registration() -> bool {
+    true
+}
+
+fn default_oauth_authorization_code_ttl_secs() -> u64 {
+    600
+}
+
+fn default_oauth_access_token_ttl_secs() -> u64 {
+    3600
 }
 
 fn default_ring_buffer_bytes() -> usize {

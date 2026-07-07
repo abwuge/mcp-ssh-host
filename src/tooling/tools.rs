@@ -20,7 +20,17 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{str::FromStr, sync::Arc, time::Duration};
 
-pub fn list_tools() -> Value {
+pub fn list_tools(oauth_scopes: Option<&[String]>) -> Value {
+    let security_schemes = oauth_scopes.map(|scopes| {
+        json!([{
+            "type": "oauth2",
+            "scopes": scopes,
+        }])
+    });
+    let tool = |name: &str, description: &str, input_schema: Value| {
+        tool(name, description, input_schema, security_schemes.as_ref())
+    };
+
     json!([
         tool("server_info", "Return server configuration summary and active target state.", object_schema(vec![])),
         tool("target_list", "List configured local and SSH targets, including policy summaries and active marker.", object_schema(vec![])),
@@ -226,12 +236,32 @@ fn target_disconnect(state: &AppState, req: TargetRequest) -> Result<Value> {
     }
 }
 
-fn tool(name: &str, description: &str, input_schema: Value) -> Value {
-    json!({
+fn tool(
+    name: &str,
+    description: &str,
+    input_schema: Value,
+    security_schemes: Option<&Value>,
+) -> Value {
+    let mut descriptor = json!({
         "name": name,
         "description": description,
         "inputSchema": input_schema,
-    })
+    });
+
+    if let Some(schemes) = security_schemes {
+        let object = descriptor
+            .as_object_mut()
+            .expect("tool descriptor is an object");
+        object.insert("securitySchemes".to_string(), schemes.clone());
+        object.insert(
+            "_meta".to_string(),
+            json!({
+                "securitySchemes": schemes,
+            }),
+        );
+    }
+
+    descriptor
 }
 
 #[derive(Debug, Clone)]

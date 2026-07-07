@@ -20,6 +20,10 @@ Implemented:
 - minimal stdio MCP JSON-RPC server;
 - optional HTTP JSON-RPC server;
 - optional HTTP bearer token authentication;
+- optional OAuth 2.1-style HTTP authentication for remote MCP / ChatGPT Apps,
+  including protected-resource metadata, authorization-server metadata,
+  dynamic client registration, authorization-code + PKCE, and opaque bearer
+  tokens;
 - `initialize`, `tools/list`, `tools/call`, `ping`;
 - target registry with `local` and `ssh:<profile>` ids;
 - session-scoped active target stickiness;
@@ -47,6 +51,8 @@ Known MVP limitations:
 
 - active target state is process-scoped, including HTTP mode; a later daemon transport should make it per client/session;
 - SSH exec and file operations run through one persistent OpenSSH worker per target; file metadata relies on remote `stat`;
+- embedded OAuth state is in-memory and intended for development/testing, not as
+  a replacement for a production identity provider;
 - `terminal_resize` currently records the request but does not yet call a low-level PTY resize API;
 - run `cargo fmt`, `cargo test`, and `cargo clippy` before production use.
 
@@ -150,7 +156,53 @@ HTTP bearer authentication is optional. Set either `server.http_bearer_token` in
 Authorization: Bearer <token>
 ```
 
-Bind HTTP to `127.0.0.1` unless bearer auth is configured, the surrounding network is trusted, and the target policies are locked down.
+Bind HTTP to `127.0.0.1` unless bearer or OAuth auth is configured, the surrounding network is trusted, and the target policies are locked down.
+
+### OAuth for remote MCP / ChatGPT Apps
+
+To make the HTTP endpoint discoverable as an authenticated remote MCP server,
+enable OAuth and publish the service behind an HTTPS origin:
+
+```toml
+[server]
+oauth_enabled = true
+public_base_url = "https://mcp.example.com"
+oauth_scopes = ["mcp:tools"]
+oauth_authorization_password = "change-me"
+oauth_allow_dynamic_client_registration = true
+```
+
+The same values can be supplied without editing the config:
+
+```bash
+MCP_SSH_HOST_OAUTH=1 \
+MCP_SSH_HOST_PUBLIC_BASE_URL=https://mcp.example.com \
+MCP_SSH_HOST_OAUTH_PASSWORD='change-me' \
+cargo run -- --config examples/config.toml --http 127.0.0.1:8765
+```
+
+OAuth adds these public endpoints:
+
+```text
+GET  /.well-known/oauth-protected-resource
+GET  /.well-known/oauth-authorization-server
+GET  /oauth/authorize
+POST /oauth/authorize
+POST /oauth/token
+POST /oauth/register
+```
+
+The embedded authorization server is intentionally small: it supports dynamic
+client registration, public-client `authorization_code` with PKCE `S256`, and
+in-memory opaque access tokens. That is enough to exercise ChatGPT/App OAuth
+linking during development. For a production app, put the MCP server behind
+HTTPS, set `public_base_url` to that exact origin, and prefer an established
+identity provider for durable users, token signing, revocation, and policy.
+
+When OAuth is enabled, `tools/list` includes per-tool `securitySchemes` and the
+Apps SDK compatibility mirror `_meta.securitySchemes`. Unauthenticated MCP
+requests receive `401 Unauthorized` with a `WWW-Authenticate` challenge pointing
+to `/.well-known/oauth-protected-resource`.
 
 ## Manual JSON-RPC smoke test
 

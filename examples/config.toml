@@ -6,6 +6,17 @@ runtime_dir = "/tmp/mcp-ssh-host"
 # Optional HTTP bearer auth. You can also set MCP_SSH_HOST_HTTP_TOKEN
 # instead of storing a token here.
 # http_bearer_token = "change-me"
+#
+# Optional OAuth support for remote HTTP MCP / ChatGPT Apps. For real ChatGPT
+# use, publish the HTTP server behind HTTPS and set public_base_url to that
+# externally reachable origin, or set MCP_SSH_HOST_PUBLIC_BASE_URL.
+# oauth_enabled = true
+# public_base_url = "https://mcp.example.com"
+# oauth_scopes = ["mcp:tools"]
+# oauth_authorization_password = "change-me"
+# oauth_allow_dynamic_client_registration = true
+# oauth_authorization_code_ttl_secs = 600
+# oauth_access_token_ttl_secs = 3600
 
 # Local host is intentionally disabled by default. Enable only for trusted setups.
 [targets.local]

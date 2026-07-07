@@ -131,7 +131,13 @@ fn handle_request(state: Arc<AppState>, request: RpcRequest) -> Option<RpcRespon
     let id = request.id.clone();
     let result = match request.method.as_str() {
         "initialize" => initialize(&state, request.params.unwrap_or_else(|| json!({}))),
-        "tools/list" => Ok(json!({ "tools": tools::list_tools() })),
+        "tools/list" => Ok(json!({ "tools": tools::list_tools(
+            state
+                .config
+                .server
+                .oauth_enabled
+                .then_some(state.config.server.oauth_scopes.as_slice())
+        ) })),
         "tools/call" => tools_call(state, request.params.unwrap_or_else(|| json!({}))),
         "ping" => Ok(json!({})),
         other => Err(Error::Tool(format!("unsupported method: {other}"))),

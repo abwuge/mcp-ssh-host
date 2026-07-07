@@ -1,0 +1,333 @@
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use rand::{rngs::OsRng, RngCore};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Debug, Default)]
+pub struct OAuthState {
+    clients: BTreeMap<String, OAuthClient>,
+    codes: BTreeMap<String, AuthorizationCode>,
+    tokens: BTreeMap<String, AccessToken>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuthClient {
+    pub client_id: String,
+    pub client_name: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub issued_at_unix: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthorizationCodeRequest {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub code_challenge: String,
+    pub code_challenge_method: String,
+    pub scopes: Vec<String>,
+    pub resource: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenResponse {
+    pub access_token: String,
+    pub expires_in: u64,
+    pub scope: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OAuthError {
+    pub error: &'static str,
+    pub description: String,
+}
+
+#[derive(Debug, Clone)]
+struct AuthorizationCode {
+    client_id: String,
+    redirect_uri: String,
+    code_challenge: String,
+    code_challenge_method: String,
+    scopes: Vec<String>,
+    resource: String,
+    expires_at: SystemTime,
+}
+
+#[derive(Debug, Clone)]
+struct AccessToken {
+    expires_at: SystemTime,
+    #[allow(dead_code)]
+    client_id: String,
+    #[allow(dead_code)]
+    scopes: Vec<String>,
+    #[allow(dead_code)]
+    resource: String,
+}
+
+impl OAuthState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register_client(
+        &mut self,
+        client_name: Option<String>,
+        redirect_uris: Vec<String>,
+    ) -> OAuthClient {
+        self.prune_expired(SystemTime::now());
+
+        let client = OAuthClient {
+            client_id: format!("client_{}", random_url_token(24)),
+            client_name,
+            redirect_uris,
+            issued_at_unix: unix_now(),
+        };
+        self.clients
+            .insert(client.client_id.clone(), client.clone());
+        client
+    }
+
+    pub fn client_allows_redirect(&self, client_id: &str, redirect_uri: &str) -> bool {
+        self.clients
+            .get(client_id)
+            .map(|client| {
+                client
+                    .redirect_uris
+                    .iter()
+                    .any(|registered| registered == redirect_uri)
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn has_client(&self, client_id: &str) -> bool {
+        self.clients.contains_key(client_id)
+    }
+
+    pub fn issue_authorization_code(
+        &mut self,
+        request: AuthorizationCodeRequest,
+        ttl_secs: u64,
+    ) -> String {
+        let now = SystemTime::now();
+        self.prune_expired(now);
+
+        let code = random_url_token(32);
+        self.codes.insert(
+            code.clone(),
+            AuthorizationCode {
+                client_id: request.client_id,
+                redirect_uri: request.redirect_uri,
+                code_challenge: request.code_challenge,
+                code_challenge_method: request.code_challenge_method,
+                scopes: request.scopes,
+                resource: request.resource,
+                expires_at: now + Duration::from_secs(ttl_secs),
+            },
+        );
+        code
+    }
+
+    pub fn exchange_authorization_code(
+        &mut self,
+        code: &str,
+        client_id: &str,
+        redirect_uri: &str,
+        code_verifier: &str,
+        resource: Option<&str>,
+        ttl_secs: u64,
+    ) -> std::result::Result<TokenResponse, OAuthError> {
+        let now = SystemTime::now();
+        self.prune_expired(now);
+
+        let Some(code_record) = self.codes.remove(code) else {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "authorization code is unknown or expired",
+            ));
+        };
+
+        if code_record.expires_at <= now {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "authorization code is expired",
+            ));
+        }
+
+        if code_record.client_id != client_id {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "authorization code was issued to a different client",
+            ));
+        }
+
+        if code_record.redirect_uri != redirect_uri {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "redirect_uri does not match the authorization request",
+            ));
+        }
+
+        if let Some(resource) = resource {
+            if resource != code_record.resource {
+                return Err(OAuthError::new(
+                    "invalid_target",
+                    "resource does not match the authorization request",
+                ));
+            }
+        }
+
+        if !pkce_matches(
+            &code_record.code_challenge_method,
+            &code_record.code_challenge,
+            code_verifier,
+        ) {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "PKCE code verifier did not match",
+            ));
+        }
+
+        let access_token = format!("mcp_{}", random_url_token(32));
+        self.tokens.insert(
+            access_token.clone(),
+            AccessToken {
+                expires_at: now + Duration::from_secs(ttl_secs),
+                client_id: client_id.to_string(),
+                scopes: code_record.scopes.clone(),
+                resource: code_record.resource,
+            },
+        );
+
+        Ok(TokenResponse {
+            access_token,
+            expires_in: ttl_secs,
+            scope: code_record.scopes.join(" "),
+        })
+    }
+
+    pub fn access_token_valid(&mut self, token: &str) -> bool {
+        let now = SystemTime::now();
+        self.prune_expired(now);
+        self.tokens
+            .get(token)
+            .map(|record| record.expires_at > now)
+            .unwrap_or(false)
+    }
+
+    fn prune_expired(&mut self, now: SystemTime) {
+        self.codes.retain(|_, code| code.expires_at > now);
+        self.tokens.retain(|_, token| token.expires_at > now);
+    }
+}
+
+impl OAuthError {
+    pub fn new(error: &'static str, description: impl Into<String>) -> Self {
+        Self {
+            error,
+            description: description.into(),
+        }
+    }
+}
+
+fn pkce_matches(method: &str, challenge: &str, verifier: &str) -> bool {
+    if method != "S256" {
+        return false;
+    }
+
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest) == challenge
+}
+
+fn random_url_token(bytes: usize) -> String {
+    let mut buf = vec![0_u8; bytes];
+    OsRng.fill_bytes(&mut buf);
+    URL_SAFE_NO_PAD.encode(buf)
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AuthorizationCodeRequest, OAuthState};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn exchanges_authorization_code_with_pkce() {
+        let verifier = "correct horse battery staple";
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let mut state = OAuthState::new();
+
+        let code = state.issue_authorization_code(
+            AuthorizationCodeRequest {
+                client_id: "client-1".to_string(),
+                redirect_uri: "https://chatgpt.com/connector/oauth/callback".to_string(),
+                code_challenge: challenge,
+                code_challenge_method: "S256".to_string(),
+                scopes: vec!["mcp:tools".to_string()],
+                resource: "https://mcp.example.com".to_string(),
+            },
+            600,
+        );
+
+        let token = state
+            .exchange_authorization_code(
+                &code,
+                "client-1",
+                "https://chatgpt.com/connector/oauth/callback",
+                verifier,
+                Some("https://mcp.example.com"),
+                3600,
+            )
+            .expect("code exchange succeeds");
+
+        assert_eq!(token.scope, "mcp:tools");
+        assert!(state.access_token_valid(&token.access_token));
+    }
+
+    #[test]
+    fn rejects_reused_authorization_code() {
+        let verifier = "verifier";
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let mut state = OAuthState::new();
+        let code = state.issue_authorization_code(
+            AuthorizationCodeRequest {
+                client_id: "client-1".to_string(),
+                redirect_uri: "https://chatgpt.com/connector/oauth/callback".to_string(),
+                code_challenge: challenge,
+                code_challenge_method: "S256".to_string(),
+                scopes: vec!["mcp:tools".to_string()],
+                resource: "https://mcp.example.com".to_string(),
+            },
+            600,
+        );
+
+        let _ = state.exchange_authorization_code(
+            &code,
+            "client-1",
+            "https://chatgpt.com/connector/oauth/callback",
+            verifier,
+            Some("https://mcp.example.com"),
+            3600,
+        );
+
+        let err = state
+            .exchange_authorization_code(
+                &code,
+                "client-1",
+                "https://chatgpt.com/connector/oauth/callback",
+                verifier,
+                Some("https://mcp.example.com"),
+                3600,
+            )
+            .expect_err("code cannot be reused");
+        assert_eq!(err.error, "invalid_grant");
+    }
+}
