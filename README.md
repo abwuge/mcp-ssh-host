@@ -19,6 +19,7 @@ Implemented:
 
 - minimal stdio MCP JSON-RPC server;
 - optional HTTP JSON-RPC server;
+- optional HTTP bearer token authentication;
 - `initialize`, `tools/list`, `tools/call`, `ping`;
 - target registry with `local` and `ssh:<profile>` ids;
 - session-scoped active target stickiness;
@@ -143,7 +144,13 @@ POST /mcp
 POST /
 ```
 
-The HTTP transport has no authentication. Bind it to `127.0.0.1` unless the surrounding network is trusted and the target policies are locked down.
+HTTP bearer authentication is optional. Set either `server.http_bearer_token` in the config file or the `MCP_SSH_HOST_HTTP_TOKEN` environment variable. When configured, every non-`OPTIONS` HTTP request must include:
+
+```text
+Authorization: Bearer <token>
+```
+
+Bind HTTP to `127.0.0.1` unless bearer auth is configured, the surrounding network is trusted, and the target policies are locked down.
 
 ## Manual JSON-RPC smoke test
 
@@ -176,20 +183,24 @@ A tool call looks like:
 Start the server:
 
 ```bash
-cargo run -- --config examples/config.toml --http 127.0.0.1:8765
+TOKEN='change-me'
+MCP_SSH_HOST_HTTP_TOKEN="$TOKEN" cargo run -- --config examples/config.toml --http 127.0.0.1:8765
 ```
 
 Then call the MCP endpoint:
 
 ```bash
-curl -s http://127.0.0.1:8765/health
+curl -s http://127.0.0.1:8765/health \
+  -H "Authorization: Bearer $TOKEN"
 
 curl -s http://127.0.0.1:8765/mcp \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"manual","version":"0"}}}'
 
 curl -s http://127.0.0.1:8765/mcp \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"target_list","arguments":{}}}'
 ```
 

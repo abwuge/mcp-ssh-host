@@ -26,6 +26,10 @@ pub fn serve_http(state: Arc<AppState>, addr: &str) -> Result<()> {
 
 fn handle_request(state: Arc<AppState>, mut request: Request) -> Result<()> {
     let method = request.method().clone();
+    if method != Method::Options && !request_authorized(&state, &request) {
+        return respond_unauthorized(request);
+    }
+
     let path = request.url().split('?').next().unwrap_or("/").to_string();
 
     match (method, path.as_str()) {
@@ -74,6 +78,14 @@ fn respond_json(request: Request, status: u16, value: serde_json::Value) -> Resu
     respond_bytes(request, status, serde_json::to_vec(&value)?)
 }
 
+fn respond_unauthorized(request: Request) -> Result<()> {
+    let mut response = Response::from_data(br#"{"error":"unauthorized"}"#.to_vec())
+        .with_status_code(StatusCode(401));
+    response.add_header(header("Content-Type", "application/json"));
+    response.add_header(header("WWW-Authenticate", r#"Bearer realm="mcp-ssh-host""#));
+    request.respond(response).map_err(Error::Io)
+}
+
 fn respond_bytes(request: Request, status: u16, body: Vec<u8>) -> Result<()> {
     let mut response = Response::from_data(body).with_status_code(StatusCode(status));
     response.add_header(header("Content-Type", "application/json"));
@@ -94,4 +106,45 @@ fn respond_empty_with_allow(request: Request, status: u16) -> Result<()> {
 
 fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("static header is valid")
+}
+
+fn request_authorized(state: &AppState, request: &Request) -> bool {
+    let Some(expected_token) = state.config.server.http_bearer_token.as_deref() else {
+        return true;
+    };
+
+    request.headers().iter().any(|header| {
+        header.field.equiv("Authorization")
+            && authorization_matches(header.value.as_str(), expected_token)
+    })
+}
+
+fn authorization_matches(value: &str, expected_token: &str) -> bool {
+    let Some((scheme, token)) = value.split_once(' ') else {
+        return false;
+    };
+
+    scheme.eq_ignore_ascii_case("Bearer") && token == expected_token
+}
+
+#[cfg(test)]
+mod tests {
+    use super::authorization_matches;
+
+    #[test]
+    fn authorization_matches_bearer_token() {
+        assert!(authorization_matches("Bearer secret-token", "secret-token"));
+        assert!(authorization_matches("bearer secret-token", "secret-token"));
+    }
+
+    #[test]
+    fn authorization_rejects_missing_or_wrong_token() {
+        assert!(!authorization_matches("Basic secret-token", "secret-token"));
+        assert!(!authorization_matches("Bearer wrong-token", "secret-token"));
+        assert!(!authorization_matches("Bearer", "secret-token"));
+        assert!(!authorization_matches(
+            "Bearer  secret-token",
+            "secret-token"
+        ));
+    }
 }

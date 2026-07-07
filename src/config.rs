@@ -23,6 +23,9 @@ pub struct ServerConfig {
     #[serde(default = "default_version")]
     pub version: String,
 
+    #[serde(default = "default_http_bearer_token")]
+    pub http_bearer_token: Option<String>,
+
     #[serde(default)]
     pub default_target: Option<String>,
 
@@ -138,6 +141,7 @@ impl Default for ServerConfig {
         Self {
             name: default_name(),
             version: default_version(),
+            http_bearer_token: default_http_bearer_token(),
             default_target: None,
             terminal_ring_buffer_bytes: default_ring_buffer_bytes(),
             runtime_dir: default_runtime_dir(),
@@ -163,7 +167,7 @@ impl Default for PolicyConfig {
 
 impl Config {
     pub fn load(path: Option<PathBuf>) -> Result<Self> {
-        match path {
+        let config = match path {
             Some(path) => Self::load_from_path(&path),
             None => {
                 let default_path = default_config_path();
@@ -173,7 +177,10 @@ impl Config {
                     Ok(Config::default())
                 }
             }
-        }
+        }?;
+
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
@@ -182,6 +189,7 @@ impl Config {
         })?;
         let mut config: Config = toml::from_str(&text)?;
         config.ensure_local_target();
+        config.validate()?;
         Ok(config)
     }
 
@@ -203,6 +211,19 @@ impl Config {
             })
         });
     }
+
+    fn validate(&self) -> Result<()> {
+        if let Some(token) = &self.server.http_bearer_token {
+            if token.trim().is_empty() || token.trim() != token {
+                return Err(Error::Config(
+                    "server.http_bearer_token must not be empty or padded with whitespace"
+                        .to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn default_name() -> String {
@@ -211,6 +232,12 @@ fn default_name() -> String {
 
 fn default_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+fn default_http_bearer_token() -> Option<String> {
+    std::env::var("MCP_SSH_HOST_HTTP_TOKEN")
+        .ok()
+        .filter(|token| !token.trim().is_empty())
 }
 
 fn default_ring_buffer_bytes() -> usize {
