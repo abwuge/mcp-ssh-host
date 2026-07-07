@@ -1,12 +1,14 @@
+use super::edit::{apply_text_edits, EditOutcome, TextEdit};
 use crate::{
-    config::TargetConfig,
-    edit::{apply_text_edits, EditOutcome, TextEdit},
-    error::{Error, Result},
-    policy::{self, FileAccess},
-    ssh,
-    state::AppState,
-    target::{ResolvedTarget, TargetId},
-    util::{sha256_hex, truncate_bytes},
+    core::{
+        config::TargetConfig,
+        error::{Error, Result},
+        policy::{self, FileAccess},
+        state::AppState,
+        target::{ResolvedTarget, TargetId},
+        util::{sha256_hex, truncate_bytes},
+    },
+    transport::ssh,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Serialize};
@@ -264,7 +266,7 @@ fn list_local(path: &str) -> Result<Vec<FileEntry>> {
 fn list_remote(
     state: &AppState,
     target_name: &str,
-    ssh_config: &crate::config::SshTargetConfig,
+    ssh_config: &crate::core::config::SshTargetConfig,
     path: &str,
     timeout: Duration,
 ) -> Result<Vec<FileEntry>> {

@@ -1,19 +1,9 @@
-mod config;
-mod edit;
-mod error;
-mod exec;
-mod fs;
-mod http;
-mod mcp;
-mod policy;
-mod ssh;
-mod state;
-mod target;
-mod terminal;
-mod tools;
-mod util;
+mod core;
+mod protocol;
+mod tooling;
+mod transport;
 
-use crate::{config::Config, error::Result, state::AppState};
+use crate::core::{config::Config, error::Result, state::AppState};
 use std::{path::PathBuf, sync::Arc};
 
 struct Args {
@@ -34,9 +24,9 @@ fn run() -> Result<()> {
     let state = Arc::new(AppState::new(config)?);
 
     if let Some(addr) = args.http_addr {
-        http::serve_http(state, &addr)
+        protocol::http::serve_http(state, &addr)
     } else {
-        mcp::serve_stdio(state)
+        protocol::mcp::serve_stdio(state)
     }
 }
 

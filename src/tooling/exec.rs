@@ -1,10 +1,13 @@
 use crate::{
-    config::TargetConfig,
-    error::{Error, Result},
-    policy, ssh,
-    state::AppState,
-    target::{ResolvedTarget, TargetId},
-    util::truncate_bytes,
+    core::{
+        config::TargetConfig,
+        error::{Error, Result},
+        policy,
+        state::AppState,
+        target::{ResolvedTarget, TargetId},
+        util::truncate_bytes,
+    },
+    transport::ssh,
 };
 use serde::{Deserialize, Serialize};
 use std::{

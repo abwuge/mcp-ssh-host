@@ -1,9 +1,11 @@
 use crate::{
-    config::{Config, TargetConfig},
-    error::{Error, Result},
-    ssh::SshSessionRegistry,
-    target::{ResolvedTarget, TargetId, TargetSource},
-    terminal::TerminalRegistry,
+    core::{
+        config::{Config, TargetConfig},
+        error::{Error, Result},
+        target::{ResolvedTarget, TargetId, TargetSource},
+    },
+    tooling::terminal::TerminalRegistry,
+    transport::ssh::SshSessionRegistry,
 };
 use serde::Serialize;
 use std::{str::FromStr, sync::Mutex, time::SystemTime};
@@ -109,12 +111,12 @@ impl AppState {
                 TargetConfig::Local(_) => TargetId::Local,
                 TargetConfig::Ssh(_) => TargetId::Ssh(key.clone()),
             };
-            let policy = crate::policy::target_policy(config);
+            let policy = crate::core::policy::target_policy(config);
             summaries.push(TargetSummary {
                 id: target_id.to_string(),
                 kind: target_id.kind().to_string(),
                 config_key: key.clone(),
-                enabled: crate::policy::target_enabled(config),
+                enabled: crate::core::policy::target_enabled(config),
                 active: active.as_ref() == Some(&target_id),
                 policy: TargetPolicySummary {
                     allow_exec: policy.allow_exec,

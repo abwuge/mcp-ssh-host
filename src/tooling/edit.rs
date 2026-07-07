@@ -1,4 +1,4 @@
-use crate::{
+use crate::core::{
     error::{Error, Result},
     util::sha256_hex,
 };

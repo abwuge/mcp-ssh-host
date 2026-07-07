@@ -1,7 +1,9 @@
 use crate::{
-    error::{Error, Result},
-    mcp,
-    state::AppState,
+    core::{
+        error::{Error, Result},
+        state::AppState,
+    },
+    protocol::mcp,
 };
 use serde_json::json;
 use std::{sync::Arc, thread};

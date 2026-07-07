@@ -1,8 +1,10 @@
 use crate::{
-    config::SshTargetConfig,
-    error::{Error, Result},
-    exec::RawExecOutput,
-    util::shell_quote,
+    core::{
+        config::SshTargetConfig,
+        error::{Error, Result},
+        util::shell_quote,
+    },
+    tooling::exec::RawExecOutput,
 };
 use serde_json::{json, Value};
 use std::{

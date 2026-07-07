@@ -1,15 +1,20 @@
 use crate::{
-    config::TargetConfig,
-    error::{Error, Result},
-    exec::{self, ExecRequest},
-    fs::{self, FileEditRequest, FileListRequest, FileReadRequest},
-    policy, ssh,
-    state::AppState,
-    target::{ResolvedTarget, TargetId},
-    terminal::{
-        TerminalCloseRequest, TerminalOpenRequest, TerminalReadRequest, TerminalResizeRequest,
-        TerminalSendRequest,
+    core::{
+        config::TargetConfig,
+        error::{Error, Result},
+        policy,
+        state::AppState,
+        target::{ResolvedTarget, TargetId, TargetSource},
     },
+    tooling::{
+        exec::{self, ExecRequest},
+        fs::{self, FileEditRequest, FileListRequest, FileReadRequest},
+        terminal::{
+            TerminalCloseRequest, TerminalOpenRequest, TerminalReadRequest, TerminalResizeRequest,
+            TerminalSendRequest,
+        },
+    },
+    transport::ssh,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -172,7 +177,7 @@ fn target_connect(state: &AppState, req: TargetRequest) -> Result<Value> {
     policy::check_target_enabled(&target, config)?;
     match (target.clone(), config) {
         (TargetId::Local, TargetConfig::Local(_)) => Ok(json!({
-            "resolved_target": ResolvedTarget::new(target, crate::target::TargetSource::Explicit),
+            "resolved_target": ResolvedTarget::new(target, TargetSource::Explicit),
             "connected": true,
             "message": "local target is always available when enabled"
         })),
@@ -180,7 +185,7 @@ fn target_connect(state: &AppState, req: TargetRequest) -> Result<Value> {
             let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
             let output = ssh::connect(&state.ssh_sessions, &name, ssh_config, timeout)?;
             Ok(json!({
-                "resolved_target": ResolvedTarget::new(target, crate::target::TargetSource::Explicit),
+                "resolved_target": ResolvedTarget::new(target, TargetSource::Explicit),
                 "connected": output.exit_code == Some(0),
                 "exit_code": output.exit_code,
                 "stdout": String::from_utf8_lossy(&output.stdout),
@@ -199,7 +204,7 @@ fn target_disconnect(state: &AppState, req: TargetRequest) -> Result<Value> {
     let config = state.get_target_config(&target)?;
     match (target.clone(), config) {
         (TargetId::Local, TargetConfig::Local(_)) => Ok(json!({
-            "resolved_target": ResolvedTarget::new(target, crate::target::TargetSource::Explicit),
+            "resolved_target": ResolvedTarget::new(target, TargetSource::Explicit),
             "disconnected": true,
             "message": "local target has no connection to close"
         })),
@@ -207,7 +212,7 @@ fn target_disconnect(state: &AppState, req: TargetRequest) -> Result<Value> {
             let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
             let output = ssh::disconnect(&state.ssh_sessions, &name, timeout)?;
             Ok(json!({
-                "resolved_target": ResolvedTarget::new(target, crate::target::TargetSource::Explicit),
+                "resolved_target": ResolvedTarget::new(target, TargetSource::Explicit),
                 "disconnected": output.exit_code == Some(0),
                 "exit_code": output.exit_code,
                 "stdout": String::from_utf8_lossy(&output.stdout),

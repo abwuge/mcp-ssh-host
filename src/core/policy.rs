@@ -1,4 +1,4 @@
-use crate::{
+use crate::core::{
     config::{PolicyConfig, TargetConfig},
     error::{Error, Result},
     target::{TargetId, TargetSource},

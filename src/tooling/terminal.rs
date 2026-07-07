@@ -1,9 +1,12 @@
 use crate::{
-    config::TargetConfig,
-    error::{Error, Result},
-    policy, ssh,
-    state::AppState,
-    target::{ResolvedTarget, TargetId},
+    core::{
+        config::TargetConfig,
+        error::{Error, Result},
+        policy,
+        state::AppState,
+        target::{ResolvedTarget, TargetId},
+    },
+    transport::ssh,
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
