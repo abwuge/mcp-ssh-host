@@ -46,7 +46,7 @@ Implemented:
 Known MVP limitations:
 
 - active target state is process-scoped, including HTTP mode; a later daemon transport should make it per client/session;
-- SSH file operations rely on `python3` on the remote host;
+- SSH file operations use remote POSIX shell tools through OpenSSH; directory metadata relies on `stat`;
 - `terminal_resize` currently records the request but does not yet call a low-level PTY resize API;
 - run `cargo fmt`, `cargo test`, and `cargo clippy` before production use.
 
