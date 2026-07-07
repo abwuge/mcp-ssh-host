@@ -30,8 +30,6 @@ host = "dev.example.com"
 port = 22
 user = "ubuntu"
 # identity_file = "/Users/you/.ssh/id_ed25519"
-control_master = true
-control_persist_secs = 1800
 extra_args = ["-o", "BatchMode=yes"]
 shell = "bash"
 
@@ -53,7 +51,6 @@ enabled = true
 host = "prod.example.com"
 port = 22
 user = "ubuntu"
-control_master = true
 extra_args = ["-o", "BatchMode=yes"]
 
 [targets.prod.policy]

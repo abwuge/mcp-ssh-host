@@ -1,74 +1,454 @@
 use crate::{
-    config::{Config, SshTargetConfig},
+    config::SshTargetConfig,
     error::{Error, Result},
-    exec::{run_program_collect, RawExecOutput},
+    exec::RawExecOutput,
     util::shell_quote,
 };
 use serde_json::{json, Value};
-use std::{path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
-pub fn connect(config: &Config, ssh: &SshTargetConfig, timeout: Duration) -> Result<RawExecOutput> {
-    if !ssh.control_master {
-        return exec(config, ssh, "true", None, timeout);
-    }
-
-    let mut check_args = base_args(config, ssh);
-    check_args.push("-O".to_string());
-    check_args.push("check".to_string());
-    check_args.push(destination(ssh));
-    let check = run_program_collect("ssh", &check_args, None, timeout)?;
-    if check.exit_code == Some(0) {
-        return Ok(check);
-    }
-
-    let mut args = base_args(config, ssh);
-    args.push("-MNf".to_string());
-    args.push(destination(ssh));
-    run_program_collect("ssh", &args, None, timeout)
+pub struct SshSessionRegistry {
+    sessions: Mutex<HashMap<String, Arc<SshSession>>>,
 }
 
-pub fn disconnect(
-    config: &Config,
+impl SshSessionRegistry {
+    pub fn new() -> Self {
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn ids(&self) -> Vec<String> {
+        let mut ids: Vec<_> = self.sessions.lock().unwrap().keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    fn get_or_start(&self, target_name: &str, ssh: &SshTargetConfig) -> Result<Arc<SshSession>> {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(session) = sessions.get(target_name) {
+            if !session.is_closed() {
+                return Ok(Arc::clone(session));
+            }
+        }
+
+        let session = Arc::new(SshSession::start(ssh)?);
+        sessions.insert(target_name.to_string(), Arc::clone(&session));
+        Ok(session)
+    }
+
+    fn run_script(
+        &self,
+        target_name: &str,
+        ssh: &SshTargetConfig,
+        script: &str,
+        script_args: &[&str],
+        timeout: Duration,
+    ) -> Result<RawExecOutput> {
+        let session = self.get_or_start(target_name, ssh)?;
+        let output = session.run_script(script, script_args, timeout);
+        if matches!(&output, Ok(raw) if raw.timed_out) || output.is_err() || session.is_closed() {
+            let mut sessions = self.sessions.lock().unwrap();
+            if sessions
+                .get(target_name)
+                .is_some_and(|current| Arc::ptr_eq(current, &session))
+            {
+                sessions.remove(target_name);
+            }
+        }
+        output
+    }
+
+    fn disconnect(&self, target_name: &str, timeout: Duration) -> Result<RawExecOutput> {
+        let session = self.sessions.lock().unwrap().remove(target_name);
+        match session {
+            Some(session) => session.shutdown(timeout),
+            None => Ok(RawExecOutput {
+                exit_code: Some(0),
+                stdout: b"persistent ssh worker was not running\n".to_vec(),
+                stderr: Vec::new(),
+                timed_out: false,
+            }),
+        }
+    }
+}
+
+struct SshSession {
+    state: Mutex<SshSessionState>,
+}
+
+struct SshSessionState {
+    child: Child,
+    stdin: ChildStdin,
+    stdout_rx: Receiver<Vec<u8>>,
+    stderr_rx: Receiver<Vec<u8>>,
+    marker_prefix: String,
+    next_command_id: u64,
+    closed: bool,
+}
+
+impl SshSession {
+    fn start(ssh: &SshTargetConfig) -> Result<Self> {
+        let mut args = base_args(ssh);
+        args.push("-T".to_string());
+        args.push(destination(ssh));
+        args.push("sh".to_string());
+
+        let mut child = Command::new("ssh")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| Error::Tool("failed to open ssh worker stdin".to_string()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| Error::Tool("failed to open ssh worker stdout".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| Error::Tool("failed to open ssh worker stderr".to_string()))?;
+
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        spawn_reader(stdout, stdout_tx);
+        spawn_reader(stderr, stderr_tx);
+
+        Ok(Self {
+            state: Mutex::new(SshSessionState {
+                child,
+                stdin,
+                stdout_rx,
+                stderr_rx,
+                marker_prefix: marker_prefix(),
+                next_command_id: 0,
+                closed: false,
+            }),
+        })
+    }
+
+    fn is_closed(&self) -> bool {
+        self.state.lock().unwrap().closed
+    }
+
+    fn run_script(
+        &self,
+        script: &str,
+        script_args: &[&str],
+        timeout: Duration,
+    ) -> Result<RawExecOutput> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return Err(Error::Tool("persistent ssh worker is closed".to_string()));
+        }
+
+        let command_id = state.next_command_id;
+        state.next_command_id += 1;
+
+        let marker_id = format!("{}_{}", state.marker_prefix, command_id);
+        let stdout_prefix = format!("__MCP_SSH_HOST_{marker_id}_STDOUT_END_");
+        let stdout_suffix = b"__\n";
+        let stderr_marker = format!("__MCP_SSH_HOST_{marker_id}_STDERR_END__\n");
+        let wrapper = build_wrapper(script, script_args, &stdout_prefix, &stderr_marker);
+
+        if let Err(err) = state.stdin.write_all(wrapper.as_bytes()) {
+            state.closed = true;
+            return Err(Error::Io(err));
+        }
+        if let Err(err) = state.stdin.flush() {
+            state.closed = true;
+            return Err(Error::Io(err));
+        }
+
+        let deadline = Instant::now() + timeout;
+        let stdout_prefix = stdout_prefix.into_bytes();
+        let stderr_marker = stderr_marker.into_bytes();
+        let mut stdout_buffer = Vec::new();
+        let mut stderr_buffer = Vec::new();
+        let mut stdout: Option<Vec<u8>> = None;
+        let mut stderr: Option<Vec<u8>> = None;
+        let mut exit_code = None;
+        let mut timed_out = false;
+
+        loop {
+            drain_channel(&state.stdout_rx, &mut stdout_buffer);
+            drain_channel(&state.stderr_rx, &mut stderr_buffer);
+
+            if stdout.is_none() {
+                if let Some((code, bytes)) =
+                    take_stdout_until_marker(&mut stdout_buffer, &stdout_prefix, stdout_suffix)?
+                {
+                    exit_code = Some(code);
+                    stdout = Some(bytes);
+                }
+            }
+            if stderr.is_none() {
+                stderr = take_until_marker(&mut stderr_buffer, &stderr_marker);
+            }
+
+            if stdout.is_some() && stderr.is_some() {
+                break;
+            }
+
+            if let Some(status) = state.child.try_wait()? {
+                state.closed = true;
+                drain_channel(&state.stdout_rx, &mut stdout_buffer);
+                drain_channel(&state.stderr_rx, &mut stderr_buffer);
+                return Ok(RawExecOutput {
+                    exit_code: status.code(),
+                    stdout: stdout.unwrap_or(stdout_buffer),
+                    stderr: stderr.unwrap_or(stderr_buffer),
+                    timed_out: false,
+                });
+            }
+
+            if Instant::now() >= deadline {
+                timed_out = true;
+                state.closed = true;
+                let _ = state.child.kill();
+                let status = state.child.wait()?;
+                exit_code = status.code();
+                drain_channel(&state.stdout_rx, &mut stdout_buffer);
+                drain_channel(&state.stderr_rx, &mut stderr_buffer);
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        Ok(RawExecOutput {
+            exit_code,
+            stdout: stdout.unwrap_or(stdout_buffer),
+            stderr: stderr.unwrap_or(stderr_buffer),
+            timed_out,
+        })
+    }
+
+    fn shutdown(&self, timeout: Duration) -> Result<RawExecOutput> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return Ok(RawExecOutput {
+                exit_code: Some(0),
+                stdout: b"persistent ssh worker was already closed\n".to_vec(),
+                stderr: Vec::new(),
+                timed_out: false,
+            });
+        }
+
+        let _ = state.stdin.write_all(b"exit\n");
+        let _ = state.stdin.flush();
+        let started = Instant::now();
+        let mut timed_out = false;
+        let exit_code = loop {
+            if let Some(status) = state.child.try_wait()? {
+                break status.code();
+            }
+            if started.elapsed() >= timeout {
+                timed_out = true;
+                let _ = state.child.kill();
+                break state.child.wait()?.code();
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        state.closed = true;
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        drain_channel(&state.stdout_rx, &mut stdout);
+        drain_channel(&state.stderr_rx, &mut stderr);
+        if stdout.is_empty() {
+            stdout.extend_from_slice(b"persistent ssh worker disconnected\n");
+        }
+
+        Ok(RawExecOutput {
+            exit_code,
+            stdout,
+            stderr,
+            timed_out,
+        })
+    }
+}
+
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        let Ok(state) = self.state.get_mut() else {
+            return;
+        };
+        if state.closed {
+            return;
+        }
+
+        let _ = state.stdin.write_all(b"exit\n");
+        let _ = state.stdin.flush();
+        let started = Instant::now();
+        loop {
+            match state.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if started.elapsed() < Duration::from_millis(200) => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                _ => {
+                    let _ = state.child.kill();
+                    let _ = state.child.wait();
+                    break;
+                }
+            }
+        }
+        state.closed = true;
+    }
+}
+
+fn spawn_reader<R>(mut reader: R, tx: mpsc::Sender<Vec<u8>>)
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut scratch = [0_u8; 8192];
+        loop {
+            match reader.read(&mut scratch) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx.send(scratch[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn drain_channel(rx: &Receiver<Vec<u8>>, buffer: &mut Vec<u8>) {
+    while let Ok(chunk) = rx.try_recv() {
+        buffer.extend_from_slice(&chunk);
+    }
+}
+
+fn build_wrapper(
+    script: &str,
+    script_args: &[&str],
+    stdout_prefix: &str,
+    stderr_marker: &str,
+) -> String {
+    let mut invocation = format!("sh -c {} sh", shell_quote(script));
+    for arg in script_args {
+        invocation.push(' ');
+        invocation.push_str(&shell_quote(arg));
+    }
+
+    format!(
+        "\n{invocation}\n__mcp_status=$?\nprintf '%s%s%s\\n' {} \"$__mcp_status\" __\nprintf '%s\\n' {} >&2\n",
+        shell_quote(stdout_prefix),
+        shell_quote(stderr_marker.trim_end())
+    )
+}
+
+fn take_stdout_until_marker(
+    buffer: &mut Vec<u8>,
+    prefix: &[u8],
+    suffix: &[u8],
+) -> Result<Option<(i32, Vec<u8>)>> {
+    let Some(start) = find_subsequence(buffer, prefix) else {
+        return Ok(None);
+    };
+    let status_start = start + prefix.len();
+    let Some(relative_end) = find_subsequence(&buffer[status_start..], suffix) else {
+        return Ok(None);
+    };
+    let status_end = status_start + relative_end;
+    let status_text = String::from_utf8_lossy(&buffer[status_start..status_end]);
+    let exit_code = status_text.trim().parse::<i32>().map_err(|err| {
+        Error::Tool(format!(
+            "persistent ssh worker returned invalid exit marker {status_text:?}: {err}"
+        ))
+    })?;
+    let output = buffer[..start].to_vec();
+    buffer.drain(..status_end + suffix.len());
+    Ok(Some((exit_code, output)))
+}
+
+fn take_until_marker(buffer: &mut Vec<u8>, marker: &[u8]) -> Option<Vec<u8>> {
+    let start = find_subsequence(buffer, marker)?;
+    let output = buffer[..start].to_vec();
+    buffer.drain(..start + marker.len());
+    Some(output)
+}
+
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn marker_prefix() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}_{}", std::process::id(), nanos)
+}
+
+pub fn connect(
+    sessions: &SshSessionRegistry,
+    target_name: &str,
     ssh: &SshTargetConfig,
     timeout: Duration,
 ) -> Result<RawExecOutput> {
-    if !ssh.control_master {
-        return Ok(RawExecOutput {
-            exit_code: Some(0),
-            stdout: b"control_master disabled; nothing to disconnect\n".to_vec(),
-            stderr: Vec::new(),
-            timed_out: false,
-        });
-    }
+    sessions.run_script(target_name, ssh, "true", &[], timeout)
+}
 
-    let mut args = base_args(config, ssh);
-    args.push("-O".to_string());
-    args.push("exit".to_string());
-    args.push(destination(ssh));
-    run_program_collect("ssh", &args, None, timeout)
+pub fn disconnect(
+    sessions: &SshSessionRegistry,
+    target_name: &str,
+    timeout: Duration,
+) -> Result<RawExecOutput> {
+    sessions.disconnect(target_name, timeout)
 }
 
 pub fn exec(
-    config: &Config,
+    sessions: &SshSessionRegistry,
+    target_name: &str,
     ssh: &SshTargetConfig,
     command: &str,
     cwd: Option<&str>,
     timeout: Duration,
 ) -> Result<RawExecOutput> {
     let remote_command = with_cwd(command, cwd);
-    let mut args = base_args(config, ssh);
-    args.push(destination(ssh));
-    args.push(remote_command);
-    run_program_collect("ssh", &args, None, timeout)
+    sessions.run_script(target_name, ssh, &remote_command, &[], timeout)
 }
 
 pub fn read_file(
-    config: &Config,
+    sessions: &SshSessionRegistry,
+    target_name: &str,
     ssh: &SshTargetConfig,
     path: &str,
     timeout: Duration,
 ) -> Result<Vec<u8>> {
-    let output = remote_sh(config, ssh, r#"cat < "$1""#, &[path], None, timeout)?;
+    let output = remote_sh(
+        sessions,
+        target_name,
+        ssh,
+        r#"cat < "$1""#,
+        &[path],
+        timeout,
+    )?;
     if output.exit_code == Some(0) {
         Ok(output.stdout)
     } else {
@@ -80,13 +460,14 @@ pub fn read_file(
 }
 
 pub fn write_file(
-    config: &Config,
+    sessions: &SshSessionRegistry,
+    target_name: &str,
     ssh: &SshTargetConfig,
     path: &str,
     bytes: &[u8],
     timeout: Duration,
 ) -> Result<()> {
-    let script = r#"
+    let mut script = r#"
 p=$1
 parent=${p%/*}
 if [ "$parent" = "$p" ]; then
@@ -106,10 +487,17 @@ cleanup() {
     rm -f "$tmp"
 }
 trap cleanup EXIT HUP INT TERM
-cat > "$tmp" || exit 1
+: > "$tmp" || exit 1
+"#
+    .to_string();
+    append_printf_chunks(&mut script, bytes);
+    script.push_str(
+        r#"
 mv -f "$tmp" "$p" || exit 1
-"#;
-    let output = remote_sh(config, ssh, script, &[path], Some(bytes.to_vec()), timeout)?;
+trap - EXIT HUP INT TERM
+"#,
+    );
+    let output = remote_sh(sessions, target_name, ssh, &script, &[path], timeout)?;
     if output.exit_code == Some(0) {
         Ok(())
     } else {
@@ -121,7 +509,8 @@ mv -f "$tmp" "$p" || exit 1
 }
 
 pub fn list_dir(
-    config: &Config,
+    sessions: &SshSessionRegistry,
+    target_name: &str,
     ssh: &SshTargetConfig,
     path: &str,
     timeout: Duration,
@@ -149,7 +538,7 @@ for child in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
     printf "%s\000%s\000%s\000%s\000%s\000" "$name" "$child" "$kind" "$size" "$modified"
 done
 "#;
-    let output = remote_sh(config, ssh, script, &[path], None, timeout)?;
+    let output = remote_sh(sessions, target_name, ssh, script, &[path], timeout)?;
     if output.exit_code != Some(0) {
         return Err(Error::Tool(format!(
             "remote list failed: {}",
@@ -160,12 +549,11 @@ done
 }
 
 pub fn terminal_program_and_args(
-    config: &Config,
     ssh: &SshTargetConfig,
     cwd: Option<&str>,
     shell: Option<&str>,
 ) -> (String, Vec<String>) {
-    let mut args = base_args(config, ssh);
+    let mut args = base_args(ssh);
     args.push("-tt".to_string());
     args.push(destination(ssh));
 
@@ -185,7 +573,7 @@ pub fn terminal_program_and_args(
     ("ssh".to_string(), args)
 }
 
-pub fn base_args(config: &Config, ssh: &SshTargetConfig) -> Vec<String> {
+pub fn base_args(ssh: &SshTargetConfig) -> Vec<String> {
     let mut args = Vec::new();
     args.push("-p".to_string());
     args.push(ssh.port.to_string());
@@ -195,40 +583,34 @@ pub fn base_args(config: &Config, ssh: &SshTargetConfig) -> Vec<String> {
         args.push(identity_file.display().to_string());
     }
 
-    if ssh.control_master {
-        args.push("-o".to_string());
-        args.push("ControlMaster=auto".to_string());
-        args.push("-o".to_string());
-        args.push(format!("ControlPersist={}s", ssh.control_persist_secs));
-        args.push("-o".to_string());
-        args.push(format!(
-            "ControlPath={}",
-            control_path(&config.server.runtime_dir).display()
-        ));
-    }
-
     args.extend(ssh.extra_args.clone());
     args
 }
 
 fn remote_sh(
-    config: &Config,
+    sessions: &SshSessionRegistry,
+    target_name: &str,
     ssh: &SshTargetConfig,
     script: &str,
     script_args: &[&str],
-    stdin: Option<Vec<u8>>,
     timeout: Duration,
 ) -> Result<RawExecOutput> {
-    let mut remote = format!("sh -c {} sh", shell_quote(script));
-    for arg in script_args {
-        remote.push(' ');
-        remote.push_str(&shell_quote(arg));
-    }
+    sessions.run_script(target_name, ssh, script, script_args, timeout)
+}
 
-    let mut args = base_args(config, ssh);
-    args.push(destination(ssh));
-    args.push(remote);
-    run_program_collect("ssh", &args, stdin, timeout)
+fn append_printf_chunks(script: &mut String, bytes: &[u8]) {
+    for chunk in bytes.chunks(4096) {
+        let mut escaped = String::with_capacity(chunk.len() * 4);
+        for byte in chunk {
+            escaped.push('\\');
+            escaped.push(char::from(b'0' + (byte >> 6)));
+            escaped.push(char::from(b'0' + ((byte >> 3) & 0o7)));
+            escaped.push(char::from(b'0' + (byte & 0o7)));
+        }
+        script.push_str("printf '%b' ");
+        script.push_str(&shell_quote(&escaped));
+        script.push_str(" >> \"$tmp\" || exit 1\n");
+    }
 }
 
 fn parse_list_dir_output(stdout: &[u8]) -> Result<Value> {
@@ -304,10 +686,6 @@ fn destination(ssh: &SshTargetConfig) -> String {
         Some(user) if !user.is_empty() => format!("{user}@{}", ssh.host),
         _ => ssh.host.clone(),
     }
-}
-
-fn control_path(runtime_dir: &Path) -> std::path::PathBuf {
-    runtime_dir.join("cm-%C")
 }
 
 #[cfg(test)]

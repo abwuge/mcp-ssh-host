@@ -9,7 +9,7 @@ The design follows these principles:
 - terminal sessions are persistent and bound to their target by `terminal_id`;
 - file edits use exact text replacements and optional SHA-256 compare-and-swap;
 - local host control is disabled by default;
-- SSH uses the system OpenSSH client in this MVP, with optional ControlMaster connection reuse.
+- SSH uses persistent per-target OpenSSH worker processes for exec and file operations.
 
 This repository is intentionally small and readable. It is a foundation for later replacing the OpenSSH CLI adapter with a native `russh` / SFTP backend.
 
@@ -40,13 +40,13 @@ Implemented:
   - `terminal_resize`
   - `terminal_close`
 - local backend for exec, file read/list/edit, and PTY terminal;
-- SSH backend via OpenSSH CLI for exec, file read/list/edit, ControlMaster connect/disconnect, and PTY terminal;
+- SSH backend via OpenSSH CLI for exec, file read/list/edit, persistent worker connect/disconnect, and PTY terminal;
 - policy checks for enable flags, file roots, write permissions, and explicit-target write requirements.
 
 Known MVP limitations:
 
 - active target state is process-scoped, including HTTP mode; a later daemon transport should make it per client/session;
-- SSH file operations use remote POSIX shell tools through OpenSSH; directory metadata relies on `stat`;
+- SSH exec and file operations run through one persistent OpenSSH worker per target; file metadata relies on remote `stat`;
 - `terminal_resize` currently records the request but does not yet call a low-level PTY resize API;
 - run `cargo fmt`, `cargo test`, and `cargo clippy` before production use.
 
@@ -235,14 +235,14 @@ Important modules:
 ```text
 src/mcp.rs       minimal MCP stdio JSON-RPC transport
 src/tools.rs     tool list and dispatch
-src/state.rs     config, active target, terminal registry
+src/state.rs     config, active target, SSH and terminal registries
 src/target.rs    TargetId and target source model
 src/policy.rs    allow/deny checks
 src/exec.rs      non-interactive command execution
 src/fs.rs        file read/list/edit dispatch
 src/edit.rs      text replacement, sha256, unified diff
 src/terminal.rs  persistent PTY sessions and ring buffer
-src/ssh.rs       OpenSSH CLI backend
+src/ssh.rs       persistent OpenSSH CLI worker backend
 ```
 
 ## Roadmap

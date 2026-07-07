@@ -1,6 +1,7 @@
 use crate::{
     config::{Config, TargetConfig},
     error::{Error, Result},
+    ssh::SshSessionRegistry,
     target::{ResolvedTarget, TargetId, TargetSource},
     terminal::TerminalRegistry,
 };
@@ -10,6 +11,7 @@ use std::{str::FromStr, sync::Mutex, time::SystemTime};
 pub struct AppState {
     pub config: Config,
     active_target: Mutex<Option<TargetId>>,
+    pub ssh_sessions: SshSessionRegistry,
     pub terminals: TerminalRegistry,
     started_at: SystemTime,
 }
@@ -44,6 +46,7 @@ impl AppState {
         };
 
         Ok(Self {
+            ssh_sessions: SshSessionRegistry::new(),
             terminals: TerminalRegistry::new(config.server.terminal_ring_buffer_bytes),
             config,
             active_target: Mutex::new(active),

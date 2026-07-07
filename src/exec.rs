@@ -63,8 +63,9 @@ pub fn run(state: &AppState, req: ExecRequest) -> Result<ExecResponse> {
             req.cwd.as_deref(),
             Duration::from_millis(timeout_ms),
         )?,
-        (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => ssh::exec(
-            &state.config,
+        (TargetId::Ssh(name), TargetConfig::Ssh(ssh_config)) => ssh::exec(
+            &state.ssh_sessions,
+            &name,
             ssh_config,
             &req.command,
             req.cwd.as_deref(),
@@ -120,41 +121,8 @@ pub fn run_local_shell(
     run_command_collect(cmd, timeout)
 }
 
-pub fn run_program_collect(
-    program: &str,
-    args: &[String],
-    stdin: Option<Vec<u8>>,
-    timeout: Duration,
-) -> Result<RawExecOutput> {
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    if stdin.is_some() {
-        cmd.stdin(Stdio::piped());
-    }
-    run_command_collect_with_stdin(cmd, stdin, timeout)
-}
-
-pub fn run_command_collect(cmd: Command, timeout: Duration) -> Result<RawExecOutput> {
-    run_command_collect_with_stdin(cmd, None, timeout)
-}
-
-fn run_command_collect_with_stdin(
-    mut cmd: Command,
-    stdin_data: Option<Vec<u8>>,
-    timeout: Duration,
-) -> Result<RawExecOutput> {
+pub fn run_command_collect(mut cmd: Command, timeout: Duration) -> Result<RawExecOutput> {
     let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-
-    if let Some(data) = stdin_data {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| Error::Tool("failed to open command stdin".to_string()))?;
-        thread::spawn(move || {
-            use std::io::Write;
-            let _ = stdin.write_all(&data);
-        });
-    }
 
     let mut stdout = child
         .stdout

@@ -21,8 +21,8 @@ pub fn list_tools() -> Value {
         tool("target_list", "List configured local and SSH targets, including policy summaries and active marker.", object_schema(vec![])),
         tool("target_current", "Return the currently selected active target, if any.", object_schema(vec![])),
         tool("target_select", "Select a session-scoped active target. Later calls may omit target and use this sticky target.", object_schema(vec![required_string("target", "Target id: local or ssh:<profile>")])),
-        tool("target_connect", "Connect or warm an SSH target. For OpenSSH backend this opens/checks a ControlMaster when enabled.", object_schema(vec![required_string("target", "Target id: local or ssh:<profile>")])),
-        tool("target_disconnect", "Disconnect an SSH target ControlMaster, or no-op for local/control_master=false.", object_schema(vec![required_string("target", "Target id: local or ssh:<profile>")])),
+        tool("target_connect", "Connect or warm an SSH target persistent worker.", object_schema(vec![required_string("target", "Target id: local or ssh:<profile>")])),
+        tool("target_disconnect", "Disconnect an SSH target persistent worker, or no-op for local targets.", object_schema(vec![required_string("target", "Target id: local or ssh:<profile>")])),
         tool("exec", "Run a non-interactive command on the explicit target or current active target.", object_schema(vec![
             optional_string("target", "Target id: local or ssh:<profile>. Omit to use active target."),
             required_string("command", "Shell command to execute."),
@@ -135,12 +135,13 @@ fn server_info(state: &AppState) -> Value {
         "name": state.config.server.name.clone(),
         "version": state.config.server.version.clone(),
         "active_target": active_target,
+        "ssh_session_ids": state.ssh_sessions.ids(),
         "terminal_ids": state.terminals.ids(),
         "runtime_dir": state.config.server.runtime_dir.display().to_string(),
         "started_at_debug": format!("{:?}", state.started_at()),
         "notes": [
             "MVP stdio MCP implementation with tools/list and tools/call.",
-            "The SSH backend uses OpenSSH CLI plus optional ControlMaster for connection reuse.",
+            "The SSH backend uses persistent per-target OpenSSH worker processes for exec and file operations.",
             "target is sticky only inside this MCP server process/session."
         ]
     })
@@ -175,9 +176,9 @@ fn target_connect(state: &AppState, req: TargetRequest) -> Result<Value> {
             "connected": true,
             "message": "local target is always available when enabled"
         })),
-        (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
+        (TargetId::Ssh(name), TargetConfig::Ssh(ssh_config)) => {
             let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
-            let output = ssh::connect(&state.config, ssh_config, timeout)?;
+            let output = ssh::connect(&state.ssh_sessions, &name, ssh_config, timeout)?;
             Ok(json!({
                 "resolved_target": ResolvedTarget::new(target, crate::target::TargetSource::Explicit),
                 "connected": output.exit_code == Some(0),
@@ -202,9 +203,9 @@ fn target_disconnect(state: &AppState, req: TargetRequest) -> Result<Value> {
             "disconnected": true,
             "message": "local target has no connection to close"
         })),
-        (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
+        (TargetId::Ssh(name), TargetConfig::Ssh(_)) => {
             let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
-            let output = ssh::disconnect(&state.config, ssh_config, timeout)?;
+            let output = ssh::disconnect(&state.ssh_sessions, &name, timeout)?;
             Ok(json!({
                 "resolved_target": ResolvedTarget::new(target, crate::target::TargetSource::Explicit),
                 "disconnected": output.exit_code == Some(0),

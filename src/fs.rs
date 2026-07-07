@@ -126,9 +126,9 @@ pub fn list(state: &AppState, req: FileListRequest) -> Result<FileListResponse> 
 
     let entries = match (target.clone(), config) {
         (TargetId::Local, TargetConfig::Local(_)) => list_local(&req.path)?,
-        (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
+        (TargetId::Ssh(name), TargetConfig::Ssh(ssh_config)) => {
             let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
-            list_remote(state, ssh_config, &req.path, timeout)?
+            list_remote(state, &name, ssh_config, &req.path, timeout)?
         }
         _ => {
             return Err(Error::Target(format!(
@@ -190,8 +190,8 @@ fn read_bytes(
 ) -> Result<Vec<u8>> {
     match (target, config) {
         (TargetId::Local, TargetConfig::Local(_)) => Ok(fs::read(path)?),
-        (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
-            ssh::read_file(&state.config, ssh_config, path, timeout)
+        (TargetId::Ssh(name), TargetConfig::Ssh(ssh_config)) => {
+            ssh::read_file(&state.ssh_sessions, name, ssh_config, path, timeout)
         }
         _ => Err(Error::Target(format!(
             "target {target} has mismatched config"
@@ -209,8 +209,8 @@ fn write_bytes(
 ) -> Result<()> {
     match (target, config) {
         (TargetId::Local, TargetConfig::Local(_)) => write_local_atomic(path, bytes),
-        (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
-            ssh::write_file(&state.config, ssh_config, path, bytes, timeout)
+        (TargetId::Ssh(name), TargetConfig::Ssh(ssh_config)) => {
+            ssh::write_file(&state.ssh_sessions, name, ssh_config, path, bytes, timeout)
         }
         _ => Err(Error::Target(format!(
             "target {target} has mismatched config"
@@ -263,11 +263,12 @@ fn list_local(path: &str) -> Result<Vec<FileEntry>> {
 
 fn list_remote(
     state: &AppState,
+    target_name: &str,
     ssh_config: &crate::config::SshTargetConfig,
     path: &str,
     timeout: Duration,
 ) -> Result<Vec<FileEntry>> {
-    let value = ssh::list_dir(&state.config, ssh_config, path, timeout)?;
+    let value = ssh::list_dir(&state.ssh_sessions, target_name, ssh_config, path, timeout)?;
     let entries = value.get("entries").cloned().unwrap_or_else(|| json!([]));
     serde_json::from_value::<Vec<FileEntry>>(entries).map_err(Error::Json)
 }

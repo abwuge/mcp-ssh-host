@@ -152,7 +152,6 @@ impl TerminalRegistry {
             }
             (TargetId::Ssh(_), TargetConfig::Ssh(ssh_config)) => {
                 let (program, args) = ssh::terminal_program_and_args(
-                    &state.config,
                     ssh_config,
                     req.cwd.as_deref(),
                     req.shell.as_deref(),
