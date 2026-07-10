@@ -25,6 +25,7 @@ Implemented:
   dynamic client registration, authorization-code + PKCE, and opaque bearer
   tokens;
 - `initialize`, `tools/list`, `tools/call`, `ping`;
+- JSON Schemas for every tool input and output, with successful tool results also returned as `structuredContent`;
 - target registry with `local` and `ssh:<profile>` ids;
 - session-scoped active target stickiness;
 - unified tools:

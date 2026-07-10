@@ -7,3 +7,4 @@
 - Session-scoped active target stickiness.
 - Local and OpenSSH CLI backends.
 - Optional HTTP transport with `/health` and `/mcp`.
+- Added `outputSchema` declarations for every tool and `structuredContent` in successful tool results.

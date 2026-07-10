@@ -28,7 +28,13 @@ pub fn list_tools(oauth_scopes: Option<&[String]>) -> Value {
         }])
     });
     let tool = |name: &str, description: &str, input_schema: Value| {
-        tool(name, description, input_schema, security_schemes.as_ref())
+        tool(
+            name,
+            description,
+            input_schema,
+            output_schema(name),
+            security_schemes.as_ref(),
+        )
     };
 
     json!([
@@ -240,12 +246,14 @@ fn tool(
     name: &str,
     description: &str,
     input_schema: Value,
+    output_schema: Value,
     security_schemes: Option<&Value>,
 ) -> Value {
     let mut descriptor = json!({
         "name": name,
         "description": description,
         "inputSchema": input_schema,
+        "outputSchema": output_schema,
     });
 
     if let Some(schemes) = security_schemes {
@@ -262,6 +270,254 @@ fn tool(
     }
 
     descriptor
+}
+
+fn output_schema(name: &str) -> Value {
+    match name {
+        "server_info" => json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "version": { "type": "string" },
+                "active_target": nullable_string_schema(),
+                "ssh_session_ids": string_array_schema(),
+                "terminal_ids": string_array_schema(),
+                "runtime_dir": { "type": "string" },
+                "started_at_debug": { "type": "string" },
+                "notes": string_array_schema()
+            },
+            "required": ["name", "version", "active_target", "ssh_session_ids", "terminal_ids", "runtime_dir", "started_at_debug", "notes"],
+            "additionalProperties": false
+        }),
+        "target_list" => json!({
+            "type": "object",
+            "properties": {
+                "targets": {
+                    "type": "array",
+                    "items": target_summary_schema()
+                }
+            },
+            "required": ["targets"],
+            "additionalProperties": false
+        }),
+        "target_current" => json!({
+            "type": "object",
+            "properties": { "active_target": nullable_string_schema() },
+            "required": ["active_target"],
+            "additionalProperties": false
+        }),
+        "target_select" => json!({
+            "type": "object",
+            "properties": {
+                "active_target": { "type": "string" },
+                "previous_target": nullable_string_schema()
+            },
+            "required": ["active_target", "previous_target"],
+            "additionalProperties": false
+        }),
+        "target_connect" => connection_schema("connected"),
+        "target_disconnect" => connection_schema("disconnected"),
+        "exec" => json!({
+            "type": "object",
+            "properties": {
+                "resolved_target": resolved_target_schema(),
+                "command": { "type": "string" },
+                "cwd": nullable_string_schema(),
+                "exit_code": nullable_integer_schema(),
+                "stdout": { "type": "string" },
+                "stderr": { "type": "string" },
+                "stdout_truncated": { "type": "boolean" },
+                "stderr_truncated": { "type": "boolean" },
+                "timed_out": { "type": "boolean" }
+            },
+            "required": ["resolved_target", "command", "cwd", "exit_code", "stdout", "stderr", "stdout_truncated", "stderr_truncated", "timed_out"],
+            "additionalProperties": false
+        }),
+        "file_read" => json!({
+            "type": "object",
+            "properties": {
+                "resolved_target": resolved_target_schema(),
+                "path": { "type": "string" },
+                "encoding": { "type": "string", "enum": ["utf-8", "base64"] },
+                "content": { "type": "string" },
+                "sha256": { "type": "string" },
+                "bytes": { "type": "integer", "minimum": 0 },
+                "truncated": { "type": "boolean" }
+            },
+            "required": ["resolved_target", "path", "encoding", "content", "sha256", "bytes", "truncated"],
+            "additionalProperties": false
+        }),
+        "file_list" => json!({
+            "type": "object",
+            "properties": {
+                "resolved_target": resolved_target_schema(),
+                "path": { "type": "string" },
+                "entries": {
+                    "type": "array",
+                    "items": file_entry_schema()
+                }
+            },
+            "required": ["resolved_target", "path", "entries"],
+            "additionalProperties": false
+        }),
+        "file_edit" => json!({
+            "type": "object",
+            "properties": {
+                "resolved_target": resolved_target_schema(),
+                "path": { "type": "string" },
+                "changed": { "type": "boolean" },
+                "written": { "type": "boolean" },
+                "old_sha256": { "type": "string" },
+                "new_sha256": { "type": "string" },
+                "diff": { "type": "string" }
+            },
+            "required": ["resolved_target", "path", "changed", "written", "old_sha256", "new_sha256", "diff"],
+            "additionalProperties": false
+        }),
+        "terminal_open" => json!({
+            "type": "object",
+            "properties": {
+                "resolved_target": resolved_target_schema(),
+                "terminal_id": { "type": "string" },
+                "rows": { "type": "integer", "minimum": 0 },
+                "cols": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["resolved_target", "terminal_id", "rows", "cols"],
+            "additionalProperties": false
+        }),
+        "terminal_send" => json!({
+            "type": "object",
+            "properties": {
+                "terminal_id": { "type": "string" },
+                "bytes_written": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["terminal_id", "bytes_written"],
+            "additionalProperties": false
+        }),
+        "terminal_read" => json!({
+            "type": "object",
+            "properties": {
+                "terminal_id": { "type": "string" },
+                "target": { "type": "string" },
+                "from_seq": { "type": "integer", "minimum": 0 },
+                "next_seq": { "type": "integer", "minimum": 0 },
+                "output": { "type": "string" },
+                "truncated": { "type": "boolean" },
+                "eof": { "type": "boolean" }
+            },
+            "required": ["terminal_id", "target", "from_seq", "next_seq", "output", "truncated", "eof"],
+            "additionalProperties": false
+        }),
+        "terminal_resize" => terminal_size_schema(),
+        "terminal_close" => json!({
+            "type": "object",
+            "properties": {
+                "terminal_id": { "type": "string" },
+                "closed": { "type": "boolean" }
+            },
+            "required": ["terminal_id", "closed"],
+            "additionalProperties": false
+        }),
+        _ => unreachable!("output schema missing for tool {name}"),
+    }
+}
+
+fn resolved_target_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "target": { "type": "string" },
+            "source": { "type": "string", "enum": ["explicit", "active", "default"] }
+        },
+        "required": ["target", "source"],
+        "additionalProperties": false
+    })
+}
+
+fn target_summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "kind": { "type": "string", "enum": ["local", "ssh"] },
+            "config_key": { "type": "string" },
+            "enabled": { "type": "boolean" },
+            "active": { "type": "boolean" },
+            "policy": {
+                "type": "object",
+                "properties": {
+                    "allow_exec": { "type": "boolean" },
+                    "allow_terminal": { "type": "boolean" },
+                    "allow_file_read": { "type": "boolean" },
+                    "allow_file_write": { "type": "boolean" },
+                    "allow_select_active": { "type": "boolean" },
+                    "require_explicit_target_for_write": { "type": "boolean" },
+                    "allowed_roots": string_array_schema()
+                },
+                "required": ["allow_exec", "allow_terminal", "allow_file_read", "allow_file_write", "allow_select_active", "require_explicit_target_for_write", "allowed_roots"],
+                "additionalProperties": false
+            }
+        },
+        "required": ["id", "kind", "config_key", "enabled", "active", "policy"],
+        "additionalProperties": false
+    })
+}
+
+fn connection_schema(status_field: &str) -> Value {
+    let mut properties = serde_json::Map::new();
+    properties.insert("resolved_target".to_string(), resolved_target_schema());
+    properties.insert(status_field.to_string(), json!({ "type": "boolean" }));
+    properties.insert("message".to_string(), json!({ "type": "string" }));
+    properties.insert("exit_code".to_string(), nullable_integer_schema());
+    properties.insert("stdout".to_string(), json!({ "type": "string" }));
+    properties.insert("stderr".to_string(), json!({ "type": "string" }));
+    properties.insert("timed_out".to_string(), json!({ "type": "boolean" }));
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": ["resolved_target", status_field],
+        "additionalProperties": false
+    })
+}
+
+fn file_entry_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "path": { "type": "string" },
+            "kind": { "type": "string" },
+            "size": { "type": "integer", "minimum": 0 },
+            "modified_unix": nullable_integer_schema()
+        },
+        "required": ["name", "path", "kind", "size", "modified_unix"],
+        "additionalProperties": false
+    })
+}
+
+fn terminal_size_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "terminal_id": { "type": "string" },
+            "rows": { "type": "integer", "minimum": 0 },
+            "cols": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["terminal_id", "rows", "cols"],
+        "additionalProperties": false
+    })
+}
+
+fn nullable_string_schema() -> Value {
+    json!({ "type": ["string", "null"] })
+}
+
+fn nullable_integer_schema() -> Value {
+    json!({ "type": ["integer", "null"] })
+}
+
+fn string_array_schema() -> Value {
+    json!({ "type": "array", "items": { "type": "string" } })
 }
 
 #[derive(Debug, Clone)]
@@ -346,4 +602,24 @@ fn file_edit_schema() -> Value {
         "required": ["path", "edits"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_tool_declares_an_object_output_schema() {
+        let tools = list_tools(None);
+        let tools = tools.as_array().expect("tool list is an array");
+
+        assert_eq!(tools.len(), 15);
+        for tool in tools {
+            let name = tool["name"].as_str().expect("tool has a name");
+            assert_eq!(
+                tool["outputSchema"]["type"], "object",
+                "tool {name} must declare an object output schema"
+            );
+        }
+    }
 }

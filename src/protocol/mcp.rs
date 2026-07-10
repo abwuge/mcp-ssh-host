@@ -199,6 +199,7 @@ fn tools_call(state: Arc<AppState>, params: Value) -> Result<Value> {
                 "type": "text",
                 "text": serde_json::to_string_pretty(&value)?,
             }],
+            "structuredContent": value,
             "isError": false,
         })),
         Err(err) => Ok(json!({
