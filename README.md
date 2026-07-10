@@ -24,6 +24,8 @@ Implemented:
   including protected-resource metadata, authorization-server metadata,
   dynamic client registration, authorization-code + PKCE, and opaque bearer
   tokens;
+- GPTs Actions REST facade with a public, dynamically generated OpenAPI 3.1
+  schema at `/openapi.json`;
 - `initialize`, `tools/list`, `tools/call`, `ping`;
 - JSON Schemas for every tool input and output, with successful tool results also returned as `structuredContent`;
 - target registry with `local` and `ssh:<profile>` ids;
@@ -54,6 +56,9 @@ Known MVP limitations:
 - SSH exec and file operations run through one persistent OpenSSH worker per target; file metadata relies on remote `stat`;
 - embedded OAuth state is in-memory and intended for development/testing, not as
   a replacement for a production identity provider;
+- GPTs Actions API-key authentication represents one shared service identity.
+  Keep the GPT private unless you add per-user identity, isolation, rate
+  limiting, and audit logging;
 - `terminal_resize` currently records the request but does not yet call a low-level PTY resize API;
 - run `cargo fmt`, `cargo test`, and `cargo clippy` before production use.
 
@@ -146,16 +151,23 @@ cargo run -- --config examples/config.toml --http 127.0.0.1:8765
 HTTP endpoints:
 
 ```text
-GET  /health
-POST /mcp
-POST /
+GET  /health                 public health check
+GET  /openapi.json           public GPTs Actions Schema
+POST /mcp                    MCP JSON-RPC
+POST /                       MCP JSON-RPC compatibility route
+GET  /actions/v1/targets     GPTs target discovery
+POST /actions/v1/*           GPTs Actions REST facade
 ```
 
-HTTP bearer authentication is optional. Set either `server.http_bearer_token` in the config file or the `MCP_SSH_HOST_HTTP_TOKEN` environment variable. When configured, every non-`OPTIONS` HTTP request must include:
+HTTP bearer authentication is optional. Set either `server.http_bearer_token` in the config file or the `MCP_SSH_HOST_HTTP_TOKEN` environment variable. When configured, protected MCP and GPTs Action requests must include:
 
 ```text
 Authorization: Bearer <token>
 ```
+
+The root document, health check, OpenAPI Schema, and OAuth discovery/flow
+endpoints remain public. Bearer authentication protects `/mcp` and
+`/actions/v1/*`.
 
 Bind HTTP to `127.0.0.1` unless bearer or OAuth auth is configured, the surrounding network is trusted, and the target policies are locked down.
 
@@ -205,6 +217,75 @@ Apps SDK compatibility mirror `_meta.securitySchemes`. Unauthenticated MCP
 requests receive `401 Unauthorized` with a `WWW-Authenticate` challenge pointing
 to `/.well-known/oauth-protected-resource`.
 
+### GPTs Actions
+
+GPTs Actions use an OpenAPI-described REST API; they do not call the MCP
+JSON-RPC endpoint directly. In HTTP mode this server exposes a public, generated
+OpenAPI 3.1 document:
+
+```text
+https://ssh.example.com/openapi.json
+```
+
+See OpenAI's [Configuring actions in GPTs](https://help.openai.com/articles/9442513)
+and [GPT Actions production notes](https://developers.openai.com/api/docs/actions/production).
+
+Set `public_base_url` to the externally reachable HTTPS origin so the
+document's `servers[0].url` is stable:
+
+```bash
+TOKEN='replace-with-a-long-random-value'
+MCP_SSH_HOST_HTTP_TOKEN="$TOKEN" \
+MCP_SSH_HOST_PUBLIC_BASE_URL=https://ssh.example.com \
+cargo run --release -- --config examples/config.toml --http 0.0.0.0:8765
+```
+
+Terminate TLS in a reverse proxy or hosting platform and route port 443 to the
+server. GPT Actions require a valid public TLS certificate and TLS 1.2 or later;
+`localhost` is useful only for local smoke tests.
+
+In the GPT editor:
+
+1. Open **Configure → Actions → Create new action**.
+2. Choose **API key**, select **Bearer**, and save the same token used by
+   `MCP_SSH_HOST_HTTP_TOKEN`.
+3. Select **Import from URL** and enter
+   `https://ssh.example.com/openapi.json`.
+4. Test `listTargets`, then a read-only action, in Preview.
+5. Add a valid Privacy Policy URL before sharing a GPT by link or publishing it.
+
+A GPT can use apps or actions, but not both at the same time. The generated
+Schema deliberately exposes only this bounded, explicit-target surface:
+
+| Method and path | `operationId` | Behavior |
+| --- | --- | --- |
+| `GET /actions/v1/targets` | `listTargets` | List target IDs and policy capabilities |
+| `POST /actions/v1/commands/execute` | `executeCommand` | Run a command; always consequential |
+| `POST /actions/v1/files/read` | `readFile` | Read bounded file content and SHA-256 |
+| `POST /actions/v1/directories/list` | `listDirectory` | List up to 100 entries |
+| `POST /actions/v1/files/edits/preview` | `previewFileEdits` | Generate a diff without writing |
+| `POST /actions/v1/files/edits/apply` | `applyFileEdits` | Apply a CAS-guarded edit; always consequential |
+
+Every target operation requires an explicit `target`. The Actions facade caps
+remote operation time at 30 seconds, request bodies at 64 KiB, command output
+at 24 KiB per stream, file content at 32 KiB, edit diffs at 32K characters,
+and complete responses at 90K characters. These limits stay below the current GPT Actions
+45-second and 100,000-character limits.
+
+For a first deployment, use a private GPT, a dedicated low-privilege SSH
+account, narrow `allowed_roots`, and read-only target policy where possible.
+The embedded MCP OAuth server is not a production GPTs OAuth provider: GPTs
+OAuth expects a configured client ID and client secret and supports per-user
+tokens. Use an external identity provider before offering personalized or
+multi-user access.
+
+Local Schema smoke test:
+
+```bash
+curl -s http://127.0.0.1:8765/openapi.json \
+  | jq '{openapi, servers, operation_ids: [.paths[][] | .operationId]}'
+```
+
 ## Manual JSON-RPC smoke test
 
 After building:
@@ -240,10 +321,15 @@ TOKEN='change-me'
 MCP_SSH_HOST_HTTP_TOKEN="$TOKEN" cargo run -- --config examples/config.toml --http 127.0.0.1:8765
 ```
 
-Then call the MCP endpoint:
+Then call the public and protected endpoints:
 
 ```bash
 curl -s http://127.0.0.1:8765/health \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s http://127.0.0.1:8765/openapi.json
+
+curl -s http://127.0.0.1:8765/actions/v1/targets \
   -H "Authorization: Bearer $TOKEN"
 
 curl -s http://127.0.0.1:8765/mcp \
@@ -271,8 +357,12 @@ The default policy is deny-by-default:
 ## Architecture
 
 ```text
-MCP stdio server
-  -> tools/call router
+MCP stdio / HTTP JSON-RPC
+  -> MCP tools/call router
+GPTs HTTPS
+  -> OpenAPI Schema + bounded Actions REST facade
+Both
+  -> shared tool dispatch
     -> AppState
       -> Target resolver
       -> Policy checks
@@ -286,16 +376,18 @@ MCP stdio server
 Important modules:
 
 ```text
-src/mcp.rs       minimal MCP stdio JSON-RPC transport
-src/tools.rs     tool list and dispatch
-src/state.rs     config, active target, SSH and terminal registries
-src/target.rs    TargetId and target source model
-src/policy.rs    allow/deny checks
-src/exec.rs      non-interactive command execution
-src/fs.rs        file read/list/edit dispatch
-src/edit.rs      text replacement, sha256, unified diff
-src/terminal.rs  persistent PTY sessions and ring buffer
-src/ssh.rs       persistent OpenSSH CLI worker backend
+src/protocol/mcp.rs       MCP JSON-RPC protocol
+src/protocol/http.rs      HTTP, bearer auth, and OAuth routes
+src/protocol/gpts.rs      GPTs Actions REST facade and OpenAPI Schema
+src/tooling/tools.rs      shared tool catalog and dispatch
+src/core/state.rs         config, active target, SSH and terminal registries
+src/core/target.rs        TargetId and target source model
+src/core/policy.rs        allow/deny checks
+src/tooling/exec.rs       non-interactive command execution
+src/tooling/fs.rs         file read/list/edit dispatch
+src/tooling/edit.rs       text replacement, SHA-256, unified diff
+src/tooling/terminal.rs   persistent PTY sessions and ring buffer
+src/transport/ssh.rs      persistent OpenSSH CLI worker backend
 ```
 
 ## Roadmap

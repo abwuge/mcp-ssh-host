@@ -4,14 +4,17 @@ default_target = "ssh:dev"
 terminal_ring_buffer_bytes = 524288
 runtime_dir = "/tmp/mcp-ssh-host"
 # Optional HTTP bearer auth. You can also set MCP_SSH_HOST_HTTP_TOKEN
-# instead of storing a token here.
+# instead of storing a token here. This is the recommended authentication mode
+# for a private GPTs Action.
 # http_bearer_token = "change-me"
 #
-# Optional OAuth support for remote HTTP MCP / ChatGPT Apps. For real ChatGPT
-# use, publish the HTTP server behind HTTPS and set public_base_url to that
-# externally reachable origin, or set MCP_SSH_HOST_PUBLIC_BASE_URL.
-# oauth_enabled = true
+# Public HTTPS origin used by OAuth metadata and by the generated GPTs OpenAPI
+# Schema. Set this for GPTs even when OAuth is disabled, or use
+# MCP_SSH_HOST_PUBLIC_BASE_URL.
 # public_base_url = "https://mcp.example.com"
+#
+# Optional OAuth support for remote HTTP MCP / ChatGPT Apps.
+# oauth_enabled = true
 # oauth_scopes = ["mcp:tools"]
 # oauth_authorization_password = "change-me"
 # oauth_allow_dynamic_client_registration = true

@@ -4,7 +4,7 @@ use crate::{
         oauth::{AuthorizationCodeRequest, OAuthError},
         state::AppState,
     },
-    protocol::mcp,
+    protocol::{gpts, mcp},
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -53,6 +53,10 @@ fn handle_request(state: Arc<AppState>, mut request: Request) -> Result<()> {
         return respond_unauthorized(&state, request);
     }
 
+    if gpts::is_action_path(&path) {
+        return gpts::handle_request(state, request, method, &path);
+    }
+
     match (method, path.as_str()) {
         (Method::Post, "/" | MCP_PATH) => {
             let mut body = Vec::new();
@@ -76,7 +80,12 @@ fn handle_request(state: Arc<AppState>, mut request: Request) -> Result<()> {
             404,
             json!({
                 "error": "not found",
-                "endpoints": ["GET /health", "POST /mcp"]
+                "endpoints": [
+                    "GET /health",
+                    "GET /openapi.json",
+                    "POST /mcp",
+                    "GET|POST /actions/v1/*"
+                ]
             }),
         ),
     }
@@ -87,6 +96,7 @@ fn is_public_endpoint(method: &Method, path: &str) -> bool {
         (method, path),
         (Method::Get, "/")
             | (Method::Get, "/health")
+            | (Method::Get, gpts::OPENAPI_PATH)
             | (Method::Get, PROTECTED_RESOURCE_METADATA_PATH)
             | (Method::Get, AUTHORIZATION_SERVER_METADATA_PATH)
             | (Method::Get, AUTHORIZE_PATH)
@@ -103,20 +113,25 @@ fn handle_public_request(
     path: String,
 ) -> Result<()> {
     match (method.clone(), path.as_str()) {
-        (Method::Get, "/") => respond_json(
-            request,
-            200,
-            json!({
-                "name": state.config.server.name.clone(),
-                "version": state.config.server.version.clone(),
-                "endpoints": {
-                    "health": "GET /health",
-                    "mcp": "POST /mcp",
-                    "oauth_protected_resource": "GET /.well-known/oauth-protected-resource",
-                    "oauth_authorization_server": "GET /.well-known/oauth-authorization-server"
-                }
-            }),
-        ),
+        (Method::Get, "/") => {
+            let base_url = public_base_url(&state, &request);
+            respond_json(
+                request,
+                200,
+                json!({
+                    "name": state.config.server.name.clone(),
+                    "version": state.config.server.version.clone(),
+                    "endpoints": {
+                        "health": endpoint(&base_url, "/health"),
+                        "mcp": endpoint(&base_url, MCP_PATH),
+                        "gpts_openapi_schema": endpoint(&base_url, gpts::OPENAPI_PATH),
+                        "gpts_actions_prefix": endpoint(&base_url, gpts::ACTIONS_PREFIX),
+                        "oauth_protected_resource": endpoint(&base_url, PROTECTED_RESOURCE_METADATA_PATH),
+                        "oauth_authorization_server": endpoint(&base_url, AUTHORIZATION_SERVER_METADATA_PATH)
+                    }
+                }),
+            )
+        }
         (Method::Get, "/health") => respond_json(
             request,
             200,
@@ -127,6 +142,11 @@ fn handle_public_request(
                 "oauth_enabled": state.config.server.oauth_enabled,
             }),
         ),
+        (Method::Get, gpts::OPENAPI_PATH) => {
+            let base_url = public_base_url(&state, &request);
+            let document = gpts::openapi_document(&state, &base_url);
+            respond_json(request, 200, document)
+        }
         (Method::Get, PROTECTED_RESOURCE_METADATA_PATH)
         | (Method::Get, AUTHORIZATION_SERVER_METADATA_PATH)
         | (Method::Get, AUTHORIZE_PATH)
@@ -599,7 +619,7 @@ fn bearer_token(request: &Request) -> Option<&str> {
     })
 }
 
-fn respond_json(request: Request, status: u16, value: Value) -> Result<()> {
+pub(crate) fn respond_json(request: Request, status: u16, value: Value) -> Result<()> {
     respond_bytes(request, status, serde_json::to_vec(&value)?)
 }
 
@@ -624,8 +644,11 @@ fn respond_oauth_error(request: Request, status: u16, err: OAuthError) -> Result
 }
 
 fn respond_unauthorized(state: &AppState, request: Request) -> Result<()> {
-    let mut response = Response::from_data(br#"{"error":"unauthorized"}"#.to_vec())
-        .with_status_code(StatusCode(401));
+    let mut response = Response::from_data(
+        br#"{"error":{"code":"unauthorized","message":"A valid bearer token is required","retryable":false}}"#
+            .to_vec(),
+    )
+    .with_status_code(StatusCode(401));
     response.add_header(header("Content-Type", "application/json"));
 
     if state.config.server.oauth_enabled {
@@ -763,7 +786,7 @@ fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).expect("static header is valid")
 }
 
-fn public_base_url(state: &AppState, request: &Request) -> String {
+pub(crate) fn public_base_url(state: &AppState, request: &Request) -> String {
     if let Some(base_url) = &state.config.server.public_base_url {
         return base_url.trim_end_matches('/').to_string();
     }
@@ -972,9 +995,11 @@ impl From<OAuthError> for Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        authorization_matches, parse_urlencoded, percent_decode, percent_encode,
-        redirect_uri_allowed,
+        authorization_matches, is_public_endpoint, parse_urlencoded, percent_decode,
+        percent_encode, redirect_uri_allowed,
     };
+    use crate::protocol::gpts;
+    use tiny_http::Method;
 
     #[test]
     fn authorization_matches_bearer_token() {
@@ -1017,5 +1042,12 @@ mod tests {
         assert!(redirect_uri_allowed("http://localhost:3000/callback"));
         assert!(redirect_uri_allowed("http://127.0.0.1:3000/callback"));
         assert!(!redirect_uri_allowed("http://example.com/callback"));
+    }
+
+    #[test]
+    fn gpts_schema_is_public_but_actions_require_http_auth() {
+        assert!(is_public_endpoint(&Method::Get, gpts::OPENAPI_PATH));
+        assert!(!is_public_endpoint(&Method::Get, "/actions/v1/targets"));
+        assert!(!is_public_endpoint(&Method::Post, "/actions/v1/files/read"));
     }
 }

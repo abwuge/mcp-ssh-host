@@ -27,6 +27,8 @@ pub struct FileReadRequest {
     pub path: String,
     #[serde(default)]
     pub max_bytes: Option<usize>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +47,8 @@ pub struct FileListRequest {
     #[serde(default)]
     pub target: Option<String>,
     pub path: String,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,16 +98,21 @@ pub fn read(state: &AppState, req: FileReadRequest) -> Result<FileReadResponse> 
     policy::check_file(&target, config, &req.path, FileAccess::Read, source)?;
 
     let policy = policy::target_policy(config);
+    let timeout_ms = req.timeout_ms.unwrap_or(policy.default_timeout_ms);
     let bytes = read_bytes(
         state,
         &target,
         config,
         &req.path,
-        Duration::from_millis(policy.default_timeout_ms),
+        Duration::from_millis(timeout_ms),
     )?;
     let sha256 = sha256_hex(&bytes);
     let original_len = bytes.len();
-    let (bytes, truncated) = truncate_bytes(bytes, req.max_bytes.or(Some(policy.max_output_bytes)));
+    let max_bytes = req
+        .max_bytes
+        .unwrap_or(policy.max_output_bytes)
+        .min(policy.max_output_bytes);
+    let (bytes, truncated) = truncate_bytes(bytes, Some(max_bytes));
 
     let (encoding, content) = match String::from_utf8(bytes.clone()) {
         Ok(text) => ("utf-8".to_string(), text),
@@ -129,7 +138,10 @@ pub fn list(state: &AppState, req: FileListRequest) -> Result<FileListResponse> 
     let entries = match (target.clone(), config) {
         (TargetId::Local, TargetConfig::Local(_)) => list_local(&req.path)?,
         (TargetId::Ssh(name), TargetConfig::Ssh(ssh_config)) => {
-            let timeout = Duration::from_millis(policy::target_policy(config).default_timeout_ms);
+            let timeout = Duration::from_millis(
+                req.timeout_ms
+                    .unwrap_or_else(|| policy::target_policy(config).default_timeout_ms),
+            );
             list_remote(state, &name, ssh_config, &req.path, timeout)?
         }
         _ => {

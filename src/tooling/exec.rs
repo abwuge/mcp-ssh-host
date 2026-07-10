@@ -62,7 +62,11 @@ pub fn run(state: &AppState, req: ExecRequest) -> Result<ExecResponse> {
 
     let policy = policy::target_policy(config);
     let timeout_ms = req.timeout_ms.unwrap_or(policy.default_timeout_ms);
-    let max_output = req.max_output_bytes.or(Some(policy.max_output_bytes));
+    let max_output = Some(
+        req.max_output_bytes
+            .unwrap_or(policy.max_output_bytes)
+            .min(policy.max_output_bytes),
+    );
 
     let raw = match (target.clone(), config) {
         (TargetId::Local, TargetConfig::Local(_)) => run_local_shell(

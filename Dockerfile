@@ -20,4 +20,6 @@ RUN apt-get update \
 
 COPY --from=builder /app/target/release/mcp-ssh-host /usr/local/bin/mcp-ssh-host
 
+EXPOSE 8765
+
 ENTRYPOINT ["mcp-ssh-host"]

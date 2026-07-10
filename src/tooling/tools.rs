@@ -55,10 +55,12 @@ pub fn list_tools(oauth_scopes: Option<&[String]>) -> Value {
             optional_string("target", "Target id. Omit to use active target."),
             required_string("path", "File path."),
             optional_integer("max_bytes", "Maximum bytes to return."),
+            optional_integer("timeout_ms", "Timeout in milliseconds for remote file access."),
         ])),
         tool("file_list", "List one directory on the explicit target or active target.", object_schema(vec![
             optional_string("target", "Target id. Omit to use active target."),
             required_string("path", "Directory path."),
+            optional_integer("timeout_ms", "Timeout in milliseconds for remote directory access."),
         ])),
         tool("file_edit", "Apply exact text replacements with sha256 compare-and-swap support. Writes require explicit target by default.", file_edit_schema()),
         tool("terminal_open", "Open a persistent PTY terminal on the explicit target or active target.", object_schema(vec![
