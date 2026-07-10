@@ -321,8 +321,6 @@ fn output_schema(name: &str) -> Value {
             "type": "object",
             "properties": {
                 "resolved_target": resolved_target_schema(),
-                "command": { "type": "string" },
-                "cwd": nullable_string_schema(),
                 "exit_code": nullable_integer_schema(),
                 "stdout": { "type": "string" },
                 "stderr": { "type": "string" },
@@ -330,7 +328,7 @@ fn output_schema(name: &str) -> Value {
                 "stderr_truncated": { "type": "boolean" },
                 "timed_out": { "type": "boolean" }
             },
-            "required": ["resolved_target", "command", "cwd", "exit_code", "stdout", "stderr", "stdout_truncated", "stderr_truncated", "timed_out"],
+            "required": ["resolved_target"],
             "additionalProperties": false
         }),
         "file_read" => json!({

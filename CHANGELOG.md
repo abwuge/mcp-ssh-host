@@ -8,3 +8,4 @@
 - Local and OpenSSH CLI backends.
 - Optional HTTP transport with `/health` and `/mcp`.
 - Added `outputSchema` declarations for every tool and `structuredContent` in successful tool results.
+- Made command results sparse by omitting echoed inputs, empty streams, and inactive status flags.

@@ -33,13 +33,17 @@ pub struct ExecRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecResponse {
     pub resolved_target: ResolvedTarget,
-    pub command: String,
-    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub stdout: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub stderr: String,
+    #[serde(skip_serializing_if = "is_false")]
     pub stdout_truncated: bool,
+    #[serde(skip_serializing_if = "is_false")]
     pub stderr_truncated: bool,
+    #[serde(skip_serializing_if = "is_false")]
     pub timed_out: bool,
 }
 
@@ -86,8 +90,6 @@ pub fn run(state: &AppState, req: ExecRequest) -> Result<ExecResponse> {
 
     Ok(ExecResponse {
         resolved_target: state.resolved_target_value(target, source),
-        command: req.command,
-        cwd: req.cwd,
         exit_code: raw.exit_code,
         stdout: String::from_utf8_lossy(&stdout).to_string(),
         stderr: String::from_utf8_lossy(&stderr).to_string(),
@@ -95,6 +97,10 @@ pub fn run(state: &AppState, req: ExecRequest) -> Result<ExecResponse> {
         stderr_truncated,
         timed_out: raw.timed_out,
     })
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn run_local_shell(
@@ -177,4 +183,32 @@ pub fn run_command_collect(mut cmd: Command, timeout: Duration) -> Result<RawExe
         stderr,
         timed_out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::target::{TargetId, TargetSource};
+    use serde_json::json;
+
+    #[test]
+    fn omits_empty_and_inactive_exec_fields() {
+        let response = ExecResponse {
+            resolved_target: ResolvedTarget::new(TargetId::Local, TargetSource::Explicit),
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            timed_out: false,
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            json!({
+                "resolved_target": { "target": "local", "source": "explicit" },
+                "exit_code": 0
+            })
+        );
+    }
 }

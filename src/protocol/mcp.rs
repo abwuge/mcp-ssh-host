@@ -195,10 +195,7 @@ fn tools_call(state: Arc<AppState>, params: Value) -> Result<Value> {
         params.arguments.unwrap_or_else(|| json!({})),
     ) {
         Ok(value) => Ok(json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string_pretty(&value)?,
-            }],
+            "content": [],
             "structuredContent": value,
             "isError": false,
         })),
