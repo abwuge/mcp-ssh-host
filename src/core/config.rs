@@ -303,7 +303,7 @@ impl Config {
 }
 
 fn default_name() -> String {
-    "mcp-ssh-host".to_string()
+    "mcp-target-ops".to_string()
 }
 
 fn default_version() -> String {
@@ -311,33 +311,33 @@ fn default_version() -> String {
 }
 
 fn default_http_bearer_token() -> Option<String> {
-    std::env::var("MCP_SSH_HOST_HTTP_TOKEN")
+    std::env::var("MCP_TARGET_OPS_HTTP_TOKEN")
         .ok()
         .filter(|token| !token.trim().is_empty())
 }
 
 fn default_oauth_enabled() -> bool {
     matches!(
-        std::env::var("MCP_SSH_HOST_OAUTH").as_deref(),
+        std::env::var("MCP_TARGET_OPS_OAUTH").as_deref(),
         Ok("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
     )
 }
 
 fn default_public_base_url() -> Option<String> {
-    std::env::var("MCP_SSH_HOST_PUBLIC_BASE_URL")
+    std::env::var("MCP_TARGET_OPS_PUBLIC_BASE_URL")
         .ok()
         .map(|url| url.trim_end_matches('/').to_string())
         .filter(|url| !url.is_empty())
 }
 
 fn default_oauth_authorization_password() -> Option<String> {
-    std::env::var("MCP_SSH_HOST_OAUTH_PASSWORD")
+    std::env::var("MCP_TARGET_OPS_OAUTH_PASSWORD")
         .ok()
         .filter(|password| !password.trim().is_empty())
 }
 
 fn default_oauth_scopes() -> Vec<String> {
-    std::env::var("MCP_SSH_HOST_OAUTH_SCOPES")
+    std::env::var("MCP_TARGET_OPS_OAUTH_SCOPES")
         .ok()
         .map(|scopes| {
             scopes
@@ -367,7 +367,7 @@ fn default_ring_buffer_bytes() -> usize {
 }
 
 fn default_runtime_dir() -> PathBuf {
-    std::env::temp_dir().join("mcp-ssh-host")
+    std::env::temp_dir().join("mcp-target-ops")
 }
 
 fn default_ssh_port() -> u16 {
@@ -387,7 +387,7 @@ fn default_max_output_bytes() -> usize {
 }
 
 pub fn default_config_path() -> PathBuf {
-    if let Ok(path) = std::env::var("MCP_SSH_HOST_CONFIG") {
+    if let Ok(path) = std::env::var("MCP_TARGET_OPS_CONFIG") {
         return PathBuf::from(path);
     }
 
@@ -396,6 +396,6 @@ pub fn default_config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."));
 
     home.join(".config")
-        .join("mcp-ssh-host")
+        .join("mcp-target-ops")
         .join("config.toml")
 }

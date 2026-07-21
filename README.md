@@ -1,4 +1,4 @@
-# mcp-ssh-host
+# mcp-target-ops
 
 A Rust MVP for a **target-based MCP server** that can control the MCP host and SSH hosts through one unified tool surface.
 
@@ -116,8 +116,8 @@ All results include the resolved target when target resolution matters.
 Copy the example config:
 
 ```bash
-mkdir -p ~/.config/mcp-ssh-host
-cp examples/config.toml ~/.config/mcp-ssh-host/config.toml
+mkdir -p ~/.config/mcp-target-ops
+cp examples/config.toml ~/.config/mcp-target-ops/config.toml
 ```
 
 Edit it before use. Local host access is disabled by default.
@@ -139,7 +139,7 @@ cargo run -- --config examples/config.toml
 Or rely on:
 
 ```bash
-MCP_SSH_HOST_CONFIG=/path/to/config.toml cargo run
+MCP_TARGET_OPS_CONFIG=/path/to/config.toml cargo run
 ```
 
 The default transport is stdio. To run an HTTP server instead:
@@ -159,7 +159,7 @@ GET  /actions/v1/targets     GPTs target discovery
 POST /actions/v1/*           GPTs Actions REST facade
 ```
 
-HTTP bearer authentication is optional. Set either `server.http_bearer_token` in the config file or the `MCP_SSH_HOST_HTTP_TOKEN` environment variable. When configured, protected MCP and GPTs Action requests must include:
+HTTP bearer authentication is optional. Set either `server.http_bearer_token` in the config file or the `MCP_TARGET_OPS_HTTP_TOKEN` environment variable. When configured, protected MCP and GPTs Action requests must include:
 
 ```text
 Authorization: Bearer <token>
@@ -188,9 +188,9 @@ oauth_allow_dynamic_client_registration = true
 The same values can be supplied without editing the config:
 
 ```bash
-MCP_SSH_HOST_OAUTH=1 \
-MCP_SSH_HOST_PUBLIC_BASE_URL=https://mcp.example.com \
-MCP_SSH_HOST_OAUTH_PASSWORD='change-me' \
+MCP_TARGET_OPS_OAUTH=1 \
+MCP_TARGET_OPS_PUBLIC_BASE_URL=https://mcp.example.com \
+MCP_TARGET_OPS_OAUTH_PASSWORD='change-me' \
 cargo run -- --config examples/config.toml --http 127.0.0.1:8765
 ```
 
@@ -235,8 +235,8 @@ document's `servers[0].url` is stable:
 
 ```bash
 TOKEN='replace-with-a-long-random-value'
-MCP_SSH_HOST_HTTP_TOKEN="$TOKEN" \
-MCP_SSH_HOST_PUBLIC_BASE_URL=https://ssh.example.com \
+MCP_TARGET_OPS_HTTP_TOKEN="$TOKEN" \
+MCP_TARGET_OPS_PUBLIC_BASE_URL=https://ssh.example.com \
 cargo run --release -- --config examples/config.toml --http 0.0.0.0:8765
 ```
 
@@ -248,7 +248,7 @@ In the GPT editor:
 
 1. Open **Configure → Actions → Create new action**.
 2. Choose **API key**, select **Bearer**, and save the same token used by
-   `MCP_SSH_HOST_HTTP_TOKEN`.
+   `MCP_TARGET_OPS_HTTP_TOKEN`.
 3. Select **Import from URL** and enter
    `https://ssh.example.com/openapi.json`.
 4. Test `listTargets`, then a read-only action, in Preview.
@@ -318,7 +318,7 @@ Start the server:
 
 ```bash
 TOKEN='change-me'
-MCP_SSH_HOST_HTTP_TOKEN="$TOKEN" cargo run -- --config examples/config.toml --http 127.0.0.1:8765
+MCP_TARGET_OPS_HTTP_TOKEN="$TOKEN" cargo run -- --config examples/config.toml --http 127.0.0.1:8765
 ```
 
 Then call the public and protected endpoints:
@@ -406,12 +406,12 @@ Suggested next steps:
 With GitHub CLI:
 
 ```bash
-gh repo create mcp-ssh-host --private --source=. --remote=origin --push
+gh repo create mcp-target-ops --private --source=. --remote=origin --push
 ```
 
 Without GitHub CLI:
 
 ```bash
-git remote add origin git@github.com:<your-user-or-org>/mcp-ssh-host.git
+git remote add origin git@github.com:<your-user-or-org>/mcp-target-ops.git
 git push -u origin main
 ```

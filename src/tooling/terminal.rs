@@ -275,7 +275,7 @@ impl TerminalRegistry {
         let session = self.get(&req.terminal_id)?;
         session.buffer.push(
             format!(
-                "\r\n[mcp-ssh-host: resize requested to {}x{}; PTY resize is not yet wired]\r\n",
+                "\r\n[mcp-target-ops: resize requested to {}x{}; PTY resize is not yet wired]\r\n",
                 req.rows, req.cols
             )
             .as_bytes(),

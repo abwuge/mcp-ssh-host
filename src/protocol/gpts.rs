@@ -511,7 +511,7 @@ pub fn openapi_document(state: &AppState, base_url: &str) -> Value {
         },
         "servers": [{
             "url": base_url.trim_end_matches('/'),
-            "description": "mcp-ssh-host public HTTPS endpoint"
+            "description": "mcp-target-ops public HTTPS endpoint"
         }],
         "security": security,
         "tags": [{
@@ -525,7 +525,7 @@ pub fn openapi_document(state: &AppState, base_url: &str) -> Value {
                     "type": "http",
                     "scheme": "bearer",
                     "bearerFormat": "API key",
-                    "description": "Configure the same bearer token in the GPT editor and MCP_SSH_HOST_HTTP_TOKEN."
+                    "description": "Configure the same bearer token in the GPT editor and MCP_TARGET_OPS_HTTP_TOKEN."
                 }
             },
             "schemas": {

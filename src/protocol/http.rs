@@ -24,12 +24,12 @@ pub fn serve_http(state: Arc<AppState>, addr: &str) -> Result<()> {
     let server = Server::http(addr)
         .map_err(|err| Error::Config(format!("failed to bind HTTP server on {addr}: {err}")))?;
 
-    eprintln!("mcp-ssh-host listening on http://{addr}/mcp");
+    eprintln!("mcp-target-ops listening on http://{addr}/mcp");
     for request in server.incoming_requests() {
         let state = Arc::clone(&state);
         thread::spawn(move || {
             if let Err(err) = handle_request(state, request) {
-                eprintln!("mcp-ssh-host HTTP request failed: {err}");
+                eprintln!("mcp-target-ops HTTP request failed: {err}");
             }
         });
     }
@@ -662,7 +662,10 @@ fn respond_unauthorized(state: &AppState, request: Request) -> Result<()> {
             ),
         ));
     } else {
-        response.add_header(header("WWW-Authenticate", r#"Bearer realm="mcp-ssh-host""#));
+        response.add_header(header(
+            "WWW-Authenticate",
+            r#"Bearer realm="mcp-target-ops""#,
+        ));
     }
 
     add_common_headers(&mut response);

@@ -1,10 +1,10 @@
 [package]
-name = "mcp-ssh-host"
+name = "mcp-target-ops"
 version = "0.1.0"
 edition = "2021"
 description = "A target-based MCP server for local and SSH host control"
 license = "MIT"
-repository = "https://github.com/your-name/mcp-ssh-host"
+repository = "https://github.com/abwuge/mcp-target-ops"
 
 [dependencies]
 base64 = "0.22"

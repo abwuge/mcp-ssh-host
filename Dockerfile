@@ -18,8 +18,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/mcp-ssh-host /usr/local/bin/mcp-ssh-host
+COPY --from=builder /app/target/release/mcp-target-ops /usr/local/bin/mcp-target-ops
 
 EXPOSE 8765
 
-ENTRYPOINT ["mcp-ssh-host"]
+ENTRYPOINT ["mcp-target-ops"]

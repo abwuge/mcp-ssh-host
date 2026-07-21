@@ -13,7 +13,7 @@ struct Args {
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("mcp-ssh-host failed: {err}");
+        eprintln!("mcp-target-ops failed: {err}");
         std::process::exit(1);
     }
 }
@@ -59,7 +59,7 @@ fn parse_args() -> Args {
             }
             "--help" | "-h" => {
                 println!(
-                    "Usage: mcp-ssh-host [--config path/to/config.toml] [--http 127.0.0.1:8765]\n\nFlags also accept --config=PATH and --http=ADDR.\nIf --http is omitted, the server uses stdio transport.\nIf --config is omitted, MCP_SSH_HOST_CONFIG or ~/.config/mcp-ssh-host/config.toml is used when present."
+                    "Usage: mcp-target-ops [--config path/to/config.toml] [--http 127.0.0.1:8765]\n\nFlags also accept --config=PATH and --http=ADDR.\nIf --http is omitted, the server uses stdio transport.\nIf --config is omitted, MCP_TARGET_OPS_CONFIG or ~/.config/mcp-target-ops/config.toml is used when present."
                 );
                 std::process::exit(0);
             }

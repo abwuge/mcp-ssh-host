@@ -163,9 +163,9 @@ impl SshSession {
         state.next_command_id += 1;
 
         let marker_id = format!("{}_{}", state.marker_prefix, command_id);
-        let stdout_prefix = format!("__MCP_SSH_HOST_{marker_id}_STDOUT_END_");
+        let stdout_prefix = format!("__MCP_TARGET_OPS_{marker_id}_STDOUT_END_");
         let stdout_suffix = b"__\n";
-        let stderr_marker = format!("__MCP_SSH_HOST_{marker_id}_STDERR_END__\n");
+        let stderr_marker = format!("__MCP_TARGET_OPS_{marker_id}_STDERR_END__\n");
         let wrapper = build_wrapper(script, script_args, &stdout_prefix, &stderr_marker);
 
         if let Err(err) = state.stdin.write_all(wrapper.as_bytes()) {
