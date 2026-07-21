@@ -11,6 +11,7 @@ pub struct OAuthState {
     clients: BTreeMap<String, OAuthClient>,
     codes: BTreeMap<String, AuthorizationCode>,
     tokens: BTreeMap<String, AccessToken>,
+    refresh_tokens: BTreeMap<String, RefreshToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,8 +35,15 @@ pub struct AuthorizationCodeRequest {
 #[derive(Debug, Clone)]
 pub struct TokenResponse {
     pub access_token: String,
+    pub refresh_token: String,
     pub expires_in: u64,
     pub scope: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TokenLifetimes {
+    pub access_token_secs: u64,
+    pub refresh_token_secs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +71,14 @@ struct AccessToken {
     #[allow(dead_code)]
     scopes: Vec<String>,
     #[allow(dead_code)]
+    resource: String,
+}
+
+#[derive(Debug, Clone)]
+struct RefreshToken {
+    expires_at: SystemTime,
+    client_id: String,
+    scopes: Vec<String>,
     resource: String,
 }
 
@@ -136,7 +152,7 @@ impl OAuthState {
         redirect_uri: &str,
         code_verifier: &str,
         resource: Option<&str>,
-        ttl_secs: u64,
+        lifetimes: TokenLifetimes,
     ) -> std::result::Result<TokenResponse, OAuthError> {
         let now = SystemTime::now();
         self.prune_expired(now);
@@ -189,22 +205,71 @@ impl OAuthState {
             ));
         }
 
-        let access_token = format!("mcp_{}", random_url_token(32));
-        self.tokens.insert(
-            access_token.clone(),
-            AccessToken {
-                expires_at: now + Duration::from_secs(ttl_secs),
-                client_id: client_id.to_string(),
-                scopes: code_record.scopes.clone(),
-                resource: code_record.resource,
-            },
-        );
+        Ok(self.issue_token_pair(
+            client_id.to_string(),
+            code_record.scopes,
+            code_record.resource,
+            lifetimes,
+            now,
+        ))
+    }
 
-        Ok(TokenResponse {
-            access_token,
-            expires_in: ttl_secs,
-            scope: code_record.scopes.join(" "),
-        })
+    pub fn exchange_refresh_token(
+        &mut self,
+        refresh_token: &str,
+        client_id: &str,
+        resource: Option<&str>,
+        requested_scope: Option<&str>,
+        lifetimes: TokenLifetimes,
+    ) -> std::result::Result<TokenResponse, OAuthError> {
+        let now = SystemTime::now();
+        self.prune_expired(now);
+
+        let Some(record) = self.refresh_tokens.get(refresh_token).cloned() else {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "refresh token is unknown or expired",
+            ));
+        };
+
+        if record.client_id != client_id {
+            return Err(OAuthError::new(
+                "invalid_grant",
+                "refresh token was issued to a different client",
+            ));
+        }
+
+        if let Some(resource) = resource {
+            if resource != record.resource {
+                return Err(OAuthError::new(
+                    "invalid_target",
+                    "resource does not match the refresh token",
+                ));
+            }
+        }
+
+        let scopes = match requested_scope {
+            Some(scope) => {
+                let requested = scope
+                    .split_whitespace()
+                    .filter(|scope| !scope.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                if requested.is_empty()
+                    || requested.iter().any(|scope| !record.scopes.contains(scope))
+                {
+                    return Err(OAuthError::new(
+                        "invalid_scope",
+                        "requested scope exceeds the refresh token scope",
+                    ));
+                }
+                requested
+            }
+            None => record.scopes,
+        };
+
+        self.refresh_tokens.remove(refresh_token);
+        Ok(self.issue_token_pair(record.client_id, scopes, record.resource, lifetimes, now))
     }
 
     pub fn access_token_valid(&mut self, token: &str) -> bool {
@@ -219,6 +284,46 @@ impl OAuthState {
     fn prune_expired(&mut self, now: SystemTime) {
         self.codes.retain(|_, code| code.expires_at > now);
         self.tokens.retain(|_, token| token.expires_at > now);
+        self.refresh_tokens
+            .retain(|_, token| token.expires_at > now);
+    }
+
+    fn issue_token_pair(
+        &mut self,
+        client_id: String,
+        scopes: Vec<String>,
+        resource: String,
+        lifetimes: TokenLifetimes,
+        now: SystemTime,
+    ) -> TokenResponse {
+        let access_token = format!("mcp_{}", random_url_token(32));
+        let refresh_token = format!("mcp_rt_{}", random_url_token(48));
+
+        self.tokens.insert(
+            access_token.clone(),
+            AccessToken {
+                expires_at: now + Duration::from_secs(lifetimes.access_token_secs),
+                client_id: client_id.clone(),
+                scopes: scopes.clone(),
+                resource: resource.clone(),
+            },
+        );
+        self.refresh_tokens.insert(
+            refresh_token.clone(),
+            RefreshToken {
+                expires_at: now + Duration::from_secs(lifetimes.refresh_token_secs),
+                client_id,
+                scopes: scopes.clone(),
+                resource,
+            },
+        );
+
+        TokenResponse {
+            access_token,
+            refresh_token,
+            expires_in: lifetimes.access_token_secs,
+            scope: scopes.join(" "),
+        }
     }
 }
 
@@ -255,7 +360,7 @@ fn unix_now() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthorizationCodeRequest, OAuthState};
+    use super::{AuthorizationCodeRequest, OAuthState, TokenLifetimes};
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use sha2::{Digest, Sha256};
 
@@ -284,12 +389,44 @@ mod tests {
                 "https://chatgpt.com/connector/oauth/callback",
                 verifier,
                 Some("https://mcp.example.com"),
-                3600,
+                TokenLifetimes {
+                    access_token_secs: 3600,
+                    refresh_token_secs: 2_592_000,
+                },
             )
             .expect("code exchange succeeds");
 
         assert_eq!(token.scope, "mcp:tools");
         assert!(state.access_token_valid(&token.access_token));
+
+        let refreshed = state
+            .exchange_refresh_token(
+                &token.refresh_token,
+                "client-1",
+                Some("https://mcp.example.com"),
+                None,
+                TokenLifetimes {
+                    access_token_secs: 3600,
+                    refresh_token_secs: 2_592_000,
+                },
+            )
+            .expect("refresh succeeds");
+        assert_ne!(refreshed.refresh_token, token.refresh_token);
+        assert!(state.access_token_valid(&refreshed.access_token));
+
+        let err = state
+            .exchange_refresh_token(
+                &token.refresh_token,
+                "client-1",
+                Some("https://mcp.example.com"),
+                None,
+                TokenLifetimes {
+                    access_token_secs: 3600,
+                    refresh_token_secs: 2_592_000,
+                },
+            )
+            .expect_err("rotated refresh token cannot be reused");
+        assert_eq!(err.error, "invalid_grant");
     }
 
     #[test]
@@ -315,7 +452,10 @@ mod tests {
             "https://chatgpt.com/connector/oauth/callback",
             verifier,
             Some("https://mcp.example.com"),
-            3600,
+            TokenLifetimes {
+                access_token_secs: 3600,
+                refresh_token_secs: 2_592_000,
+            },
         );
 
         let err = state
@@ -325,7 +465,10 @@ mod tests {
                 "https://chatgpt.com/connector/oauth/callback",
                 verifier,
                 Some("https://mcp.example.com"),
-                3600,
+                TokenLifetimes {
+                    access_token_secs: 3600,
+                    refresh_token_secs: 2_592_000,
+                },
             )
             .expect_err("code cannot be reused");
         assert_eq!(err.error, "invalid_grant");

@@ -184,6 +184,8 @@ public_base_url = "https://mcp.example.com"
 oauth_scopes = ["mcp:tools"]
 oauth_authorization_password = "change-me"
 oauth_allow_dynamic_client_registration = true
+oauth_access_token_ttl_secs = 3600
+oauth_refresh_token_ttl_secs = 2592000
 ```
 
 The same values can be supplied without editing the config:
@@ -208,10 +210,13 @@ POST /oauth/register
 
 The embedded authorization server is intentionally small: it supports dynamic
 client registration, public-client `authorization_code` with PKCE `S256`, and
-in-memory opaque access tokens. That is enough to exercise ChatGPT/App OAuth
-linking during development. For a production app, put the MCP server behind
-HTTPS, set `public_base_url` to that exact origin, and prefer an established
-identity provider for durable users, token signing, revocation, and policy.
+in-memory opaque access and rotating refresh tokens. Each successful refresh
+invalidates the previous refresh token. Access tokens last one hour and refresh
+tokens last 30 days by default. That is enough to exercise ChatGPT/App OAuth
+linking during development, but restarting the process still invalidates every
+token. For a production app, put the MCP server behind HTTPS, set
+`public_base_url` to that exact origin, and prefer an established identity
+provider for durable users, token persistence, signing, revocation, and policy.
 
 When OAuth is enabled, `tools/list` includes per-tool `securitySchemes` and the
 Apps SDK compatibility mirror `_meta.securitySchemes`. Unauthenticated MCP

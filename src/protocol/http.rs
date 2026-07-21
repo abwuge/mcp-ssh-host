@@ -1,7 +1,7 @@
 use crate::{
     core::{
         error::{Error, Result},
-        oauth::{AuthorizationCodeRequest, OAuthError},
+        oauth::{AuthorizationCodeRequest, OAuthError, TokenLifetimes, TokenResponse},
         state::AppState,
     },
     protocol::{gpts, mcp},
@@ -219,7 +219,7 @@ fn authorization_server_metadata(state: &AppState, base_url: &str) -> Value {
         "authorization_endpoint": endpoint(base_url, AUTHORIZE_PATH),
         "token_endpoint": endpoint(base_url, TOKEN_PATH),
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": state.config.server.oauth_scopes.clone(),
@@ -357,7 +357,7 @@ fn handle_register(state: Arc<AppState>, mut request: Request) -> Result<()> {
             "client_id_issued_at": client.issued_at_unix,
             "redirect_uris": client.redirect_uris,
             "token_endpoint_auth_method": "none",
-            "grant_types": ["authorization_code"],
+            "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "scope": state.config.server.oauth_scopes.join(" "),
         }),
@@ -485,49 +485,82 @@ fn handle_token(state: Arc<AppState>, mut request: Request) -> Result<()> {
         Ok(value) => value,
         Err(err) => return respond_oauth_error(request, 400, err),
     };
-    if grant_type != "authorization_code" {
-        return respond_oauth_error(
-            request,
-            400,
-            OAuthError::new(
-                "unsupported_grant_type",
-                "only authorization_code is supported",
-            ),
-        );
-    }
-
-    let code = match required_param(&params, "code") {
-        Ok(value) => value,
-        Err(err) => return respond_oauth_error(request, 400, err),
-    };
     let client_id = match required_param(&params, "client_id") {
         Ok(value) => value,
         Err(err) => return respond_oauth_error(request, 400, err),
     };
-    let redirect_uri = match required_param(&params, "redirect_uri") {
-        Ok(value) => value,
-        Err(err) => return respond_oauth_error(request, 400, err),
-    };
-    let code_verifier = match required_param(&params, "code_verifier") {
-        Ok(value) => value,
-        Err(err) => return respond_oauth_error(request, 400, err),
+
+    let exchange = match grant_type {
+        "authorization_code" => {
+            let code = match required_param(&params, "code") {
+                Ok(value) => value,
+                Err(err) => return respond_oauth_error(request, 400, err),
+            };
+            let redirect_uri = match required_param(&params, "redirect_uri") {
+                Ok(value) => value,
+                Err(err) => return respond_oauth_error(request, 400, err),
+            };
+            let code_verifier = match required_param(&params, "code_verifier") {
+                Ok(value) => value,
+                Err(err) => return respond_oauth_error(request, 400, err),
+            };
+
+            state.oauth.lock().unwrap().exchange_authorization_code(
+                code,
+                client_id,
+                redirect_uri,
+                code_verifier,
+                params.get("resource").map(String::as_str),
+                token_lifetimes(&state),
+            )
+        }
+        "refresh_token" => {
+            let refresh_token = match required_param(&params, "refresh_token") {
+                Ok(value) => value,
+                Err(err) => return respond_oauth_error(request, 400, err),
+            };
+
+            state.oauth.lock().unwrap().exchange_refresh_token(
+                refresh_token,
+                client_id,
+                params.get("resource").map(String::as_str),
+                params.get("scope").map(String::as_str),
+                token_lifetimes(&state),
+            )
+        }
+        _ => {
+            return respond_oauth_error(
+                request,
+                400,
+                OAuthError::new(
+                    "unsupported_grant_type",
+                    "only authorization_code and refresh_token are supported",
+                ),
+            )
+        }
     };
 
-    let exchange = state.oauth.lock().unwrap().exchange_authorization_code(
-        code,
-        client_id,
-        redirect_uri,
-        code_verifier,
-        params.get("resource").map(String::as_str),
-        state.config.server.oauth_access_token_ttl_secs,
-    );
+    respond_token_exchange(request, exchange)
+}
 
+fn token_lifetimes(state: &AppState) -> TokenLifetimes {
+    TokenLifetimes {
+        access_token_secs: state.config.server.oauth_access_token_ttl_secs,
+        refresh_token_secs: state.config.server.oauth_refresh_token_ttl_secs,
+    }
+}
+
+fn respond_token_exchange(
+    request: Request,
+    exchange: std::result::Result<TokenResponse, OAuthError>,
+) -> Result<()> {
     match exchange {
         Ok(token) => respond_json_with_cache_headers(
             request,
             200,
             json!({
                 "access_token": token.access_token,
+                "refresh_token": token.refresh_token,
                 "token_type": "Bearer",
                 "expires_in": token.expires_in,
                 "scope": token.scope,

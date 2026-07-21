@@ -20,6 +20,7 @@ runtime_dir = "/tmp/mcp-target-ops"
 # oauth_allow_dynamic_client_registration = true
 # oauth_authorization_code_ttl_secs = 600
 # oauth_access_token_ttl_secs = 3600
+# oauth_refresh_token_ttl_secs = 2592000
 
 # Local host is intentionally disabled by default. Enable only for trusted setups.
 [targets.local]

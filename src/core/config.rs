@@ -47,6 +47,9 @@ pub struct ServerConfig {
     #[serde(default = "default_oauth_access_token_ttl_secs")]
     pub oauth_access_token_ttl_secs: u64,
 
+    #[serde(default = "default_oauth_refresh_token_ttl_secs")]
+    pub oauth_refresh_token_ttl_secs: u64,
+
     #[serde(default)]
     pub default_target: Option<String>,
 
@@ -165,6 +168,7 @@ impl Default for ServerConfig {
                 default_oauth_allow_dynamic_client_registration(),
             oauth_authorization_code_ttl_secs: default_oauth_authorization_code_ttl_secs(),
             oauth_access_token_ttl_secs: default_oauth_access_token_ttl_secs(),
+            oauth_refresh_token_ttl_secs: default_oauth_refresh_token_ttl_secs(),
             default_target: None,
             terminal_ring_buffer_bytes: default_ring_buffer_bytes(),
             runtime_dir: default_runtime_dir(),
@@ -298,6 +302,12 @@ impl Config {
             ));
         }
 
+        if self.server.oauth_refresh_token_ttl_secs == 0 {
+            return Err(Error::Config(
+                "server.oauth_refresh_token_ttl_secs must be greater than 0".to_string(),
+            ));
+        }
+
         Ok(())
     }
 }
@@ -360,6 +370,10 @@ fn default_oauth_authorization_code_ttl_secs() -> u64 {
 
 fn default_oauth_access_token_ttl_secs() -> u64 {
     3600
+}
+
+fn default_oauth_refresh_token_ttl_secs() -> u64 {
+    30 * 24 * 60 * 60
 }
 
 fn default_ring_buffer_bytes() -> usize {
