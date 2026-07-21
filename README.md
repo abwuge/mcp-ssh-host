@@ -152,6 +152,7 @@ HTTP endpoints:
 
 ```text
 GET  /health                 public health check
+GET  /favicon.ico            public application icon
 GET  /openapi.json           public GPTs Actions Schema
 POST /mcp                    MCP JSON-RPC
 POST /                       MCP JSON-RPC compatibility route
@@ -389,6 +390,12 @@ src/tooling/edit.rs       text replacement, SHA-256, unified diff
 src/tooling/terminal.rs   persistent PTY sessions and ring buffer
 src/transport/ssh.rs      persistent OpenSSH CLI worker backend
 ```
+
+## Branding
+
+The project icon is stored at `assets/mcp-target-ops.ico`. The HTTP server
+serves it from `/favicon.ico` and displays it on the OAuth authorization page.
+Windows builds also embed the same icon in the executable.
 
 ## Roadmap
 

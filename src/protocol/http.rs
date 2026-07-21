@@ -12,11 +12,13 @@ use std::{collections::BTreeMap, io::Read, sync::Arc, thread};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const MCP_PATH: &str = "/mcp";
+const FAVICON_PATH: &str = "/favicon.ico";
 const PROTECTED_RESOURCE_METADATA_PATH: &str = "/.well-known/oauth-protected-resource";
 const AUTHORIZATION_SERVER_METADATA_PATH: &str = "/.well-known/oauth-authorization-server";
 const AUTHORIZE_PATH: &str = "/oauth/authorize";
 const TOKEN_PATH: &str = "/oauth/token";
 const REGISTER_PATH: &str = "/oauth/register";
+const APP_ICON: &[u8] = include_bytes!("../../assets/mcp-target-ops.ico");
 
 type Params = BTreeMap<String, String>;
 
@@ -95,6 +97,7 @@ fn is_public_endpoint(method: &Method, path: &str) -> bool {
     matches!(
         (method, path),
         (Method::Get, "/")
+            | (Method::Get, FAVICON_PATH)
             | (Method::Get, "/health")
             | (Method::Get, gpts::OPENAPI_PATH)
             | (Method::Get, PROTECTED_RESOURCE_METADATA_PATH)
@@ -113,6 +116,7 @@ fn handle_public_request(
     path: String,
 ) -> Result<()> {
     match (method.clone(), path.as_str()) {
+        (Method::Get, FAVICON_PATH) => respond_icon(request),
         (Method::Get, "/") => {
             let base_url = public_base_url(&state, &request);
             respond_json(
@@ -123,6 +127,7 @@ fn handle_public_request(
                     "version": state.config.server.version.clone(),
                     "endpoints": {
                         "health": endpoint(&base_url, "/health"),
+                        "favicon": endpoint(&base_url, FAVICON_PATH),
                         "mcp": endpoint(&base_url, MCP_PATH),
                         "gpts_openapi_schema": endpoint(&base_url, gpts::OPENAPI_PATH),
                         "gpts_actions_prefix": endpoint(&base_url, gpts::ACTIONS_PREFIX),
@@ -698,6 +703,14 @@ fn respond_html(request: Request, status: u16, body: String) -> Result<()> {
     request.respond(response).map_err(Error::Io)
 }
 
+fn respond_icon(request: Request) -> Result<()> {
+    let mut response = Response::from_data(APP_ICON.to_vec()).with_status_code(StatusCode(200));
+    response.add_header(header("Content-Type", "image/x-icon"));
+    response.add_header(header("Cache-Control", "public, max-age=86400"));
+    add_common_headers(&mut response);
+    request.respond(response).map_err(Error::Io)
+}
+
 fn respond_empty(request: Request, status: u16) -> Result<()> {
     let mut response = Response::empty(StatusCode(status));
     add_common_headers(&mut response);
@@ -942,9 +955,11 @@ fn consent_page(state: &AppState, params: &Params) -> String {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="{favicon_path}" type="image/x-icon">
   <title>Authorize {name}</title>
   <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 3rem auto; max-width: 36rem; line-height: 1.5; padding: 0 1rem; }}
+    .app-icon {{ display: block; width: 5rem; height: 5rem; margin-bottom: 1rem; }}
     label, input, button {{ display: block; width: 100%; box-sizing: border-box; }}
     input {{ margin: .35rem 0 1rem; padding: .65rem; }}
     button {{ padding: .75rem; }}
@@ -952,6 +967,7 @@ fn consent_page(state: &AppState, params: &Params) -> String {
   </style>
 </head>
 <body>
+  <img class="app-icon" src="{favicon_path}" alt="">
   <h1>Authorize {name}</h1>
   <p>Client <code>{client_id}</code> is requesting access to scope <code>{scope}</code>.</p>
   <form method="post" action="{authorize_path}">
@@ -966,6 +982,7 @@ fn consent_page(state: &AppState, params: &Params) -> String {
         name = html_escape(&state.config.server.name),
         client_id = html_escape(client_id),
         scope = html_escape(&scope),
+        favicon_path = FAVICON_PATH,
         authorize_path = AUTHORIZE_PATH,
         hidden_inputs = hidden_inputs,
     )
@@ -999,7 +1016,7 @@ impl From<OAuthError> for Error {
 mod tests {
     use super::{
         authorization_matches, is_public_endpoint, parse_urlencoded, percent_decode,
-        percent_encode, redirect_uri_allowed,
+        percent_encode, redirect_uri_allowed, APP_ICON, FAVICON_PATH,
     };
     use crate::protocol::gpts;
     use tiny_http::Method;
@@ -1049,8 +1066,14 @@ mod tests {
 
     #[test]
     fn gpts_schema_is_public_but_actions_require_http_auth() {
+        assert!(is_public_endpoint(&Method::Get, FAVICON_PATH));
         assert!(is_public_endpoint(&Method::Get, gpts::OPENAPI_PATH));
         assert!(!is_public_endpoint(&Method::Get, "/actions/v1/targets"));
         assert!(!is_public_endpoint(&Method::Post, "/actions/v1/files/read"));
+    }
+
+    #[test]
+    fn embedded_icon_is_an_ico_file() {
+        assert_eq!(&APP_ICON[..4], &[0, 0, 1, 0]);
     }
 }
